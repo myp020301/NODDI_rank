@@ -1,0 +1,5 @@
+/data2/mayupeng/HCP_25_dataset_ori/100206/NODDI/FIT_ICVF.nii.gz
+/data2/mayupeng/HCP_25_dataset_ori/100307/NODDI/FIT_ICVF.nii.gz
+/data2/mayupeng/HCP_25_dataset_ori/100408/NODDI/FIT_ICVF.nii.gz
+/data2/mayupeng/HCP_25_dataset_ori/100610/NODDI/FIT_ICVF.nii.gz
+/data2/mayupeng/HCP_25_dataset_ori/101006/NODDI/FIT_ICVF.nii.gz

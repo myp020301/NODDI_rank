@@ -1,0 +1,2 @@
+/data2/mayupeng/HCP_25_dataset_ori/100206/nodif_brain_mask.nii.gz
+/data2/mayupeng/HCP_25_dataset_ori/100307/nodif_brain_mask.nii.gz
