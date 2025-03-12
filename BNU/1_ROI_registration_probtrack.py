@@ -1,13 +1,11 @@
+#!/usr/bin/env python3
 import os
 import subprocess
 import glob
 import re
-
-BASE_DIR = "/data2/mayupeng/BNU"
-DATASETS = ["Agility_sample", "BBP_sample", "MASIVAR_sample"]
-
-FMRIB_FA_TEMPLATE = "$FSLDIR/data/standard/FMRIB58_FA_1mm.nii.gz"
-JHU50_SEED = "$FSLDIR/data/atlases/JHU/JHU-ICBM-labels-1mm.nii.gz"
+import argparse
+import nibabel as nib
+import numpy as np
 
 def run_command(command):
     """Executes a shell command using subprocess."""
@@ -15,10 +13,29 @@ def run_command(command):
 
 def create_4d_image(input_files, output_file):
     """Merge multiple 3D NIfTI files into a single 4D NIfTI file using fslmerge."""
-    run_command(f"fslmerge -t {output_file} {' '.join(input_files)}")
+    # 确保输出文件所在的目录已创建
+
+    cmd = f"fslmerge -t {output_file} {' '.join(input_files)}"
+    run_command(cmd)
     print(f"[INFO] Merged files into 4D image: {output_file}")
 
-def process_subject(dataset_path, sub_id):
+def save_nonzero_coordinates(nifti_path, output_txt):
+    """
+    读取 nifti_path 中的非零体素坐标(0-based)，保存到 output_txt 文件。
+    """
+    nii = nib.load(nifti_path)
+    data = nii.get_fdata()  # float64
+    nonzero_coords = np.argwhere(data != 0)  # shape (N, 3)
+
+    # 将坐标写入txt
+    with open(output_txt, 'w') as f:
+        for x, y, z in nonzero_coords:
+            # 如果需要1-based，可改为 x+1, y+1, z+1
+            f.write(f"{int(x)} {int(y)} {int(z)}\n")
+
+    print(f"[INFO] Saved nonzero coordinates of {nifti_path} to {output_txt}")
+
+def process_subject(dataset_path, sub_id, FMRIB_FA_TEMPLATE, JHU50_SEED):
     """
     Process each subject and handle DWI directory search and further processing.
     """
@@ -83,11 +100,17 @@ def process_subject(dataset_path, sub_id):
     # Inverse transform the JHU50 seed region from standard space to native space
     run_command(f"invwarp -w data/fa2standard_warp.nii.gz -r data/dtifit_FA.nii.gz -o data/JHU50_inverse_warp.nii.gz")
     run_command(f"applywarp -i {JHU50_SEED} -r data/dtifit_FA.nii.gz -w data/JHU50_inverse_warp.nii.gz -o data/JHU50_native_nn.nii.gz --interp=nn")
-
+    
+    os.makedirs("/data/seeds_list_all", exist_ok=True)
     # Create individual seed region files (1 to 50)
     for i in range(1, 51):
-        run_command(f"fslmaths data/JHU50_native_nn.nii.gz -thr {i} -uthr {i} -bin data/seed_region_{i}.nii.gz")
+        seed_out = f"data/seed_region_{i}.nii.gz"
+        run_command(f"fslmaths data/JHU50_native_nn.nii.gz -thr {i} -uthr {i} -bin {seed_out}")
 
+        # 这里新增：保存非0坐标到 seed_region_{i}.txt
+        seed_txt = f"data/seeds_list_all/seed_region_{i}.txt"
+        save_nonzero_coordinates(seed_out, seed_txt)
+        
     # Prepare seed list file
     with open("data/seed_list.txt", "w") as f:
         for i in range(1, 51):
@@ -99,12 +122,17 @@ def process_subject(dataset_path, sub_id):
         run_command("probtrackx2_gpu --seed=../data/seed_list.txt --mask=../data/nodif_brain_mask.nii.gz --samples=merged --targetmasks=../data/seed_list.txt --dir=../data/probtrack_py/ --forcedir --os2t --opd")
 
         # Loop over X and create 4D images for each X value (0-49)
+        # 在此确保 ../data/seeds_all 存在
+        os.makedirs("../data/seeds_all", exist_ok=True)
+
         for X in range(0, 50):
             input_files = []
             for Y in range(1, 51):
-                input_files.append(f"../data/probtrack_py/seeds_{X}_to_seed_region_{Y}.nii.gz")
+                in_path = f"../data/probtrack_py/seeds_{X}_to_seed_region_{Y}.nii.gz"
+                input_files.append(in_path)
             # Merge the 3D images into a 4D file
-            create_4d_image(input_files, f"../data/seeds_all/seeds_{X + 1}_to_seed_all.nii.gz")
+            out_4d = f"../data/seeds_all/seeds_{X + 1}_to_seed_all.nii.gz"
+            create_4d_image(input_files, out_4d)
             print(f"[INFO] Merged seeds_{X + 1}_to_seed_region_all.nii.gz into a 4D file.")
     else:
         print("[ERROR] bedpostx output folder 'data.bedpostX' not found.")
@@ -113,6 +141,18 @@ def process_subject(dataset_path, sub_id):
 
 def main():
     """Main function to process all datasets and subjects."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--base_dir", required=True, help="Base directory path")
+    parser.add_argument("--datasets", nargs="+", required=True,
+                        help="List of dataset names, e.g. --datasets Agility_sample BBP_sample MASIVAR_sample")
+    args = parser.parse_args()
+
+    BASE_DIR = args.base_dir
+    DATASETS = args.datasets
+
+    FMRIB_FA_TEMPLATE = "$FSLDIR/data/standard/FMRIB58_FA_1mm.nii.gz"
+    JHU50_SEED = "$FSLDIR/data/atlases/JHU/JHU-ICBM-labels-1mm.nii.gz"
+
     for dataset in DATASETS:
         print(f"[INFO] Processing dataset: {dataset}")
 
@@ -129,8 +169,8 @@ def main():
         # Traverse all subjects (sub-*) in this dataset
         for sub_id in os.listdir(dataset_path):
             # Check if it's a directory that starts with "sub-"
-            if os.path.isdir(os.path.join(dataset_path,sub_id)) and sub_id.startswith("sub-"):
-                process_subject(dataset_path, sub_id)
+            if os.path.isdir(os.path.join(dataset_path, sub_id)) and sub_id.startswith("sub-"):
+                process_subject(dataset_path, sub_id, FMRIB_FA_TEMPLATE, JHU50_SEED)
 
 if __name__ == "__main__":
     main()
