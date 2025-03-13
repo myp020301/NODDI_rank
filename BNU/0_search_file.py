@@ -69,9 +69,9 @@ def main():
                         nargs="+", 
                         default=["Agility_sample", "BBP_sample", "MASIVAR_sample"],
                         help="List of dataset names (default: Agility_sample BBP_sample MASIVAR_sample)")
-    parser.add_argument("--roi_registration_script", default="/data2/mayupeng/BNU/1.py",
+    parser.add_argument("--roi_registration_script", default="/data2/mayupeng/BNU/1_ROI_registration_probtrack.py",
                         help="Path to ROI_registration_probtrack.py")
-    parser.add_argument("--roi_calc_matrix_script", default="/data2/mayupeng/BNU/2.py",
+    parser.add_argument("--roi_calc_matrix_script", default="/data2/mayupeng/BNU/2_ROI_calc_matrix.py",
                         help="Path to ROI_calc_matrix.py")
     args = parser.parse_args()
 
