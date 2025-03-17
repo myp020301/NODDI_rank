@@ -52,7 +52,7 @@ def calc_matrix_for_seed(
 
     # 5) 计算 cor_matrix = con_matrix @ con_matrix.T
     cor_matrix = con_matrix @ con_matrix.T  # shape: (nVox, nVox)
-
+    
     # 6) 保存
     os.makedirs(output_folder, exist_ok=True)
     np.save(os.path.join(output_folder, f"con_matrix_seed_{seed_index}.npy"), con_matrix)

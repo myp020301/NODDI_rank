@@ -72,6 +72,7 @@ def main():
         # 这里新增：保存非0坐标到 seed_region_{i}.txt
         seed_txt = f"data/seeds_txt_all/seed_region_{i}.txt"
         save_nonzero_coordinates(seed_out, seed_txt)
+        
     with open("data/seed_list.txt", "w") as f:
         for i in range(1, 51):
             f.write(f"../data/seeds_region_all/seed_region_{i}.nii.gz\n")
