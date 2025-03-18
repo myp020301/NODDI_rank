@@ -6,9 +6,10 @@ import nibabel as nib
 from sklearn.cluster import KMeans
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
+import simlr  # 导入你实现的 simlr 模块
 
 
-def spectral_clustering(num_clusters, adjacency_matrix):
+def spectral_clustering(adjacency_matrix, num_clusters):
     """
     Python 版本的基于 sc3 的谱聚类函数，模仿 MATLAB 中:
       function index = sc3(k, W)
@@ -76,16 +77,6 @@ def spectral_clustering(num_clusters, adjacency_matrix):
     cluster_labels = kmeans_model.fit_predict(normalized_vectors)
 
     return cluster_labels
-
-
-def simlr_cluster(matrix, k):
-    """
-    占位函数: simlr_cluster
-    """
-    print("[WARNING] 'simlr' method not implemented in Python. Return random labels.")
-    n = matrix.shape[0]
-    labels = np.random.randint(0, k, size=n)
-    return labels
 
 def main():
     parser = argparse.ArgumentParser()
@@ -159,12 +150,12 @@ def main():
                 matrix1 = matrix @ matrix.T
                 # diag=0
                 np.fill_diagonal(matrix1, 0)
-                labels = spectral_clustering(cluster_num, matrix1)
+                labels = spectral_clustering(matrix1, cluster_num)
             elif method == "kmeans":
                 km = KMeans(n_clusters=cluster_num, n_init=10, random_state=0)
                 labels = km.fit_predict(matrix)
             elif method == "simlr":
-                labels = simlr_cluster(matrix, cluster_num)
+                labels = simlr.simlr_cluster(matrix, cluster_num)
             else:
                 print(f"[ERROR] Unknown method={method}, skip.")
                 continue
