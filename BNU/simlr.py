@@ -341,11 +341,108 @@ def network_diffusion(sim_matrix, k):
     W = (W + W.T) / 2.0
     return W
 
-# 12. t-SNE 降维（直接调用 sklearn）
-def tsne_embedding(P, no_dims=2):
-    tsne = TSNE(n_components=no_dims, perplexity=30, n_iter=1000, random_state=0)
-    embedding = tsne.fit_transform(P)
-    return embedding
+# 12. t-SNE 降维
+def tsne_embedding(P, no_dims=2, labels=None):
+    """
+    Performs symmetric t-SNE on an affinity matrix P.
+    
+    This function is a direct Python translation of the MATLAB function tsne_p_bo.
+    It uses an iterative optimization to minimize the KL divergence between P and Q
+    (computed using the Student-t distribution), with adaptive learning rates.
+    
+    Parameters
+    ----------
+    P : ndarray, shape (n, n)
+        Affinity matrix (should be symmetric, with diagonal 0 and normalized to sum=1).
+    no_dims : int or ndarray, optional
+        If an int, the target dimensionality (default=2).
+        If an array is provided, it is interpreted as an initial embedding solution,
+        and no_dims is then set to its number of columns.
+    labels : array-like, optional
+        Optional labels (not used in the optimization).
+    
+    Returns
+    -------
+    Y : ndarray, shape (n, no_dims)
+        The final t-SNE embedding.
+    """
+    # If labels not provided, set to empty array
+    if labels is None:
+        labels = np.array([])
+    
+    # Check if an initial solution is provided (if no_dims is an array)
+    if isinstance(no_dims, (list, np.ndarray)):
+        initial_solution = True
+        Y = np.array(no_dims, dtype=float).copy()
+        no_dims = Y.shape[1]
+    else:
+        initial_solution = False
+        no_dims = int(no_dims)
+    
+    n = P.shape[0]
+    momentum = 0.08
+    final_momentum = 0.1
+    momentum_switch_iter = 250
+    stop_lying_iter = 100
+    max_iter = 1000
+    learning_rate = 500
+    min_gain = 0.01
+
+    # Ensure P has zero diagonal and is symmetric
+    np.fill_diagonal(P, 0)
+    P = 0.5 * (P + P.T)
+    total_P = np.sum(P)
+    P = np.maximum(P / total_P, np.finfo(float).tiny)
+    
+    # Constant in KL divergence (unused later)
+    const_KL = np.sum(P * np.log(P))
+    
+    if not initial_solution:
+        # Lie about P-values to get better local minima
+        P = P * 4
+    
+    if not initial_solution:
+        # Random initialization for embedding
+        Y = 0.0001 * np.random.randn(n, no_dims)
+    
+    Y_increments = np.zeros_like(Y)
+    gains = np.ones_like(Y)
+    
+    # Main t-SNE optimization loop
+    for iter_idx in range(max_iter):
+        # Compute squared Euclidean distances in the embedding space
+        sum_Y = np.sum(Y**2, axis=1, keepdims=True)
+        dist_Y = sum_Y + sum_Y.T - 2 * (Y @ Y.T)
+        
+        # Compute Student-t based joint probabilities Q
+        num = 1.0 / (1 + dist_Y)
+        np.fill_diagonal(num, 0)
+        Q = num / np.sum(num)
+        Q = np.maximum(Q, np.finfo(float).tiny)
+        
+        # Compute gradient: gradient = 4 * (diag(sum(L,1)) - L) * Y, where L = (P - Q) .* num
+        L_matrix = (P - Q) * num
+        sum_L = np.sum(L_matrix, axis=0)
+        grad_Y = 4 * ((np.diag(sum_L) - L_matrix) @ Y)
+        
+        # Update gains: increase gain when gradient changes sign, otherwise decay
+        sign_mismatch = np.not_equal(np.sign(grad_Y), np.sign(Y_increments))
+        gains = (gains + 0.2) * (~sign_mismatch) + (gains * 0.8) * sign_mismatch
+        gains[gains < min_gain] = min_gain
+        
+        # Update increments and embedding
+        Y_increments = momentum * Y_increments - learning_rate * (gains * grad_Y)
+        Y = Y + Y_increments
+        Y = Y - np.mean(Y, axis=0)
+        Y = np.clip(Y, -100, 100)
+        
+        # Update momentum if needed
+        if iter_idx == momentum_switch_iter:
+            momentum = final_momentum
+        if iter_idx == stop_lying_iter and not initial_solution:
+            P = P / 4
+    
+    return Y
 
 # 13. TransitionFields：对矩阵进行归一化与重构
 def transition_fields(W):
