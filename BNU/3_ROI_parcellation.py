@@ -7,13 +7,14 @@ from sklearn.cluster import KMeans
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 
+
 def spectral_clustering(num_clusters, adjacency_matrix):
     """
     Python 版本的基于 sc3 的谱聚类函数，模仿 MATLAB 中:
       function index = sc3(k, W)
         ...
       end
-    
+
     参数:
     ----------
     num_clusters : int
@@ -76,6 +77,7 @@ def spectral_clustering(num_clusters, adjacency_matrix):
 
     return cluster_labels
 
+
 def simlr_cluster(matrix, k):
     """
     占位函数: simlr_cluster
@@ -108,6 +110,7 @@ def main():
     # 在 data_path 下新建一个输出目录 e.g. parcellation_sc / parcellation_kmeans / parcellation_simlr
     outdir = os.path.join(data_path, f"data/parcellation_{method}")
     os.makedirs(outdir, exist_ok=True)
+
 
     # 对每个 i= start_seed..end_seed
     for i in range(start_seed, end_seed+1):
@@ -182,6 +185,7 @@ def main():
             print(f"[INFO] Saved {out_nii_path}")
 
     print("[INFO] ROI_parcellation done for all seeds.")
+
 
 if __name__ == "__main__":
     main()
