@@ -69,7 +69,7 @@ def main():
                         nargs="+", 
                         default=["Agility_sample", "BBP_sample", "MASIVAR_sample"],
                         help="List of dataset names (default: Agility_sample BBP_sample MASIVAR_sample)")
-    parser.add_argument("--roi_registration_script", default="/data2/mayupeng/BNU/1_ROI_registration_probtrack.py",
+    parser.add_argument("--roi_registration_script", default="/data2/mayupeng/BNU/1_ROI_registration_probtrack_old.py",
                         help="Path to ROI_registration_probtrack.py")
     parser.add_argument("--roi_calc_matrix_script", default="/data2/mayupeng/BNU/2_ROI_calc_matrix.py",
                         help="Path to ROI_calc_matrix.py")
@@ -79,10 +79,7 @@ def main():
     DATASETS = args.datasets
     roi_registration_script = args.roi_registration_script
     roi_calc_matrix_script = args.roi_calc_matrix_script
-
-    # 常量
-    FMRIB_FA_TEMPLATE = "$FSLDIR/data/standard/FMRIB58_FA_1mm.nii.gz"
-    JHU50_SEED = "$FSLDIR/data/atlases/JHU/JHU-ICBM-labels-1mm.nii.gz"
+    
 
     for dataset in DATASETS:
         dataset_path = os.path.join(BASE_DIR, dataset)
@@ -104,8 +101,6 @@ def main():
                 "python", roi_registration_script,
                 "--data_path", data_path,
                 "--sub_id", sub_id,
-                "--FMRIB_FA_TEMPLATE", FMRIB_FA_TEMPLATE,
-                "--JHU50_SEED", JHU50_SEED
             ]
             print(f"[INFO] Calling ROI_registration_probtrack.py for {sub_id}")
             subprocess.run(cmd_reg, check=True)

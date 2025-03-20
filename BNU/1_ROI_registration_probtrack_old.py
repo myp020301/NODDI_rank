@@ -80,8 +80,8 @@ def main():
     parser.add_argument("--data_path", required=True,
                         help="Path where data/ subfolder already prepared (with data.nii.gz, nodif_brain_mask.nii.gz, bvals, bvecs)")
     parser.add_argument("--sub_id", required=True)
-    parser.add_argument("--FMRIB_FA_TEMPLATE", required=True)
-    parser.add_argument("--JHU50_SEED", required=True)
+    parser.add_argument("--FMRIB_FA_TEMPLATE", required=True, default="$FSLDIR/data/standard/FMRIB58_FA_1mm.nii.gz")
+    parser.add_argument("--JHU50_SEED", required=True, default="$FSLDIR/data/atlases/JHU/JHU-ICBM-labels-1mm.nii.gz")
     args = parser.parse_args()
 
     data_path = args.data_path

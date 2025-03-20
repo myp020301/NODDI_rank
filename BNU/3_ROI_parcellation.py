@@ -81,7 +81,7 @@ def spectral_clustering(adjacency_matrix, num_clusters):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_path", required=True,
-                        help="Subject's data directory containing con_cor, seeds_all, seeds_list_all")
+                        help="Subject's data directory containing con_cor, seeds_all, seeds_txt_all")
     parser.add_argument("--method", default="sc", choices=["sc","kmeans","simlr"],
                         help="Clustering method: sc (spectral), kmeans, or simlr. Default=sc")
     parser.add_argument("--max_cl_num", type=int, default=12,
@@ -105,8 +105,8 @@ def main():
 
     # 对每个 i= start_seed..end_seed
     for i in range(start_seed, end_seed+1):
-        # 1) 读取 coords: data_path/data/seeds_list_all/seed_region_{i}.txt
-        coord_file = os.path.join(data_path, "data/seeds_list_all", f"seed_region_{i}.txt")
+        # 1) 读取 coords: data_path/data/seeds_txt_all/seed_region_{i}.txt
+        coord_file = os.path.join(data_path, "data/seeds_txt_all", f"seed_region_{i}.txt")
         if not os.path.isfile(coord_file):
             print(f"[WARNING] {coord_file} not found, skip seed {i}")
             continue
@@ -126,7 +126,7 @@ def main():
 
         # 3) 读取 seeds_{i}_to_seed_region_all.nii.gz: data_path/seeds_all/seeds_{i}_to_seed_region_all.nii.gz
         #    用它来获取体素空间 & affine
-        fourD_nii_path = os.path.join(data_path, "data/seeds_all", f"seed_{i}_to_seeds_all.nii.gz")
+        fourD_nii_path = os.path.join(data_path, "data/seeds_result_all", f"seed_{i}_to_seeds_all.nii.gz")
         if not os.path.isfile(fourD_nii_path):
             print(f"[WARNING] {fourD_nii_path} not found, skip seed {i}")
             continue

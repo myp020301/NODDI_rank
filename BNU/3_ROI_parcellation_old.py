@@ -10,57 +10,72 @@ import simlr  # 导入实现的 simlr 模块
 
 def spectral_clustering(adjacency_matrix, num_clusters):
     """
-    基于谱聚类实现，类似于 MATLAB 中的 sc3 算法。
-    计算对称归一化拉普拉斯矩阵，再提取最小特征向量，最后利用 K-means 聚类。
-    
+    Python 版本的基于 sc3 的谱聚类函数，模仿 MATLAB 中:
+      function index = sc3(k, W)
+        ...
+      end
+
     参数:
-      num_clusters: 目标聚类数 k
-      adjacency_matrix: (n, n) 相似度矩阵
-    
+    ----------
+    num_clusters : int
+        目标聚类数 k
+    adjacency_matrix : (n, n) ndarray
+        相似度矩阵 (如由 matrix @ matrix.T 得到)，形状 (n, n)
+
     返回:
-      cluster_labels: (n,) 每个点的聚类标签 (0...k-1)
+    ----------
+    cluster_labels : (n,) ndarray
+        每个点的聚类标签 (0..k-1)
     """
+
+    # 1) 计算 L_sym = D^-1/2 * (D - adjacency_matrix) * D^-1/2
     num_points = adjacency_matrix.shape[0]
-    degree = np.sum(adjacency_matrix, axis=1)
-    D = np.diag(degree)
-    L = D - adjacency_matrix  # 拉普拉斯矩阵
+    degree_array = np.sum(adjacency_matrix, axis=1)        # degs
+    degree_matrix = np.diag(degree_array)                  # D
+    laplacian_matrix = degree_matrix - adjacency_matrix    # L = D - W
 
     # 避免除以零
-    degree[degree == 0] = 1e-12
-    inv_sqrt = 1.0 / np.sqrt(degree)
-    D_inv_sqrt = np.diag(inv_sqrt)
+    degree_array[degree_array == 0] = 1e-12
+    inv_sqrt_degree = 1.0 / np.sqrt(degree_array)          # 1/(degs^0.5)
+    inv_sqrt_degree_matrix = np.diag(inv_sqrt_degree)      # D_sqrt
 
-    L_sym = D_inv_sqrt @ L @ D_inv_sqrt
+    laplacian_sym = inv_sqrt_degree_matrix @ laplacian_matrix @ inv_sqrt_degree_matrix
 
-    # 求最小 (num_clusters+5) 个特征值/向量
+    # 2) 求 (num_clusters+5) 个最小特征值/特征向量
+    #    MATLAB sc3 里是 eigs(L_sym, k+5, eps)
+    #    Python 用 eigsh(which='SM') 求最小特征值
     kplus = min(num_clusters + 5, num_points)
-    L_sym_sp = sp.csr_matrix(L_sym)
-    eigvals, eigvecs = spla.eigsh(L_sym_sp, k=kplus, which='SM')
-    sorted_idx = np.argsort(eigvals)
-    sorted_vals = eigvals[sorted_idx]
-    nonzero = np.where(np.abs(sorted_vals) > 1e-12)[0]
-    if len(nonzero) < num_clusters:
-        chosen = sorted_idx[:num_clusters]
+    laplacian_sym_sp = sp.csr_matrix(laplacian_sym)
+    eigen_values_all, eigen_vectors_all = spla.eigsh(laplacian_sym_sp, k=kplus, which='SM')
+    # eigen_values_all, eigen_vectors_all 分别是特征值、特征向量
+
+    # 3) 与 MATLAB 中 find(diag(d)) 类似，这里先对特征值升序排序
+    index_sorted = np.argsort(eigen_values_all)
+    sorted_values = eigen_values_all[index_sorted]
+
+    # 找非零特征值下标
+    nonzero_indices = np.where(np.abs(sorted_values) > 1e-12)[0]
+    if len(nonzero_indices) < num_clusters:
+        # 若非零特征值不足 num_clusters 个，则直接取前 num_clusters 个
+        chosen_indices = index_sorted[:num_clusters]
     else:
-        start = nonzero[0]
-        chosen = sorted_idx[start:start+num_clusters]
-    U = eigvecs[:, chosen]
+        # MATLAB 中 starting = idx(1), U=U(:,starting:starting+k-1)
+        starting_idx = nonzero_indices[0]
+        chosen_indices = index_sorted[starting_idx : starting_idx + num_clusters]
 
-    # 行归一化
-    row_norm = np.linalg.norm(U, axis=1, keepdims=True)
-    row_norm[row_norm==0] = 1e-12
-    U_norm = U / row_norm
+    # 提取对应特征向量
+    eigen_vectors = eigen_vectors_all[:, chosen_indices]  # (n, num_clusters)
 
+    # 4) 行归一化
+    row_norms = np.linalg.norm(eigen_vectors, axis=1, keepdims=True)
+    row_norms[row_norms == 0] = 1e-12
+    normalized_vectors = eigen_vectors / row_norms
+
+    # 5) kmeans
     kmeans_model = KMeans(n_clusters=num_clusters, n_init=300, random_state=0)
-    labels = kmeans_model.fit_predict(U_norm)
-    return labels
+    cluster_labels = kmeans_model.fit_predict(normalized_vectors)
 
-def simlr_cluster(matrix, k):
-    """
-    占位函数，返回随机标签
-    """
-    n = matrix.shape[0]
-    return np.random.randint(0, k, size=n)
+    return cluster_labels
 
 def main():
     parser = argparse.ArgumentParser()
