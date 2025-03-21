@@ -71,14 +71,17 @@ def main():
                         help="List of dataset names (default: Agility_sample BBP_sample MASIVAR_sample)")
     parser.add_argument("--roi_registration_script", default="/data2/mayupeng/BNU/1_ROI_registration_probtrack_old.py",
                         help="Path to ROI_registration_probtrack.py")
-    parser.add_argument("--roi_calc_matrix_script", default="/data2/mayupeng/BNU/2_ROI_calc_matrix.py",
+    parser.add_argument("--roi_calc_matrix_script", default="/data2/mayupeng/BNU/2_ROI_calc_matrix_old.py",
                         help="Path to ROI_calc_matrix.py")
+    parser.add_argument("--roi_parcellation_script", default="/data2/mayupeng/BNU/3_ROI_parcellation_old.py",
+                        help="Path to ROI_parcellation.py")
     args = parser.parse_args()
 
     BASE_DIR = args.base_dir
     DATASETS = args.datasets
     roi_registration_script = args.roi_registration_script
     roi_calc_matrix_script = args.roi_calc_matrix_script
+    roi_parcellation_script = args.roi_parcellation_script
     
 
     for dataset in DATASETS:
@@ -121,6 +124,19 @@ def main():
             ]
             print(f"[INFO] Calling ROI_calc_matrix.py for {sub_id}")
             subprocess.run(cmd_calc, check=True)
+            
+            # 4) 调用 ROI_parcellation.py (进行分割)
+            #    该脚本应使用新的 targetmasks（包含 BN_ATLAS 分区）来生成分割结果
+            cmd_parcellation = [
+                "python", roi_parcellation_script,
+                "--data_path", data_path,
+                #  "--method", "sc",  # 或其他方法：sc, kmeans, simlr
+                #  "--max_cl_num", "12",
+                #  "--start_seed", "1",
+                #  "--end_seed", "50"
+            ]
+            print(f"[INFO] Calling ROI_parcellation.py for {sub_id}")
+            subprocess.run(cmd_parcellation, check=True)
 
             print(f"[INFO] Done for subject {sub_id}.\n")
 
