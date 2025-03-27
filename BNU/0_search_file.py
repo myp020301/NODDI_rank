@@ -40,7 +40,6 @@ def search_and_prepare_data(dataset_path, sub_id):
         print(f"[WARNING] Missing bval/bvec/dwi/mask for {sub_id}, skipping.")
         return None, False
 
-    # 拼出绝对路径
     bval_file = os.path.join(data_path, bval_file)
     bvec_file = os.path.join(data_path, bvec_file)
     dwi_file  = os.path.join(data_path, dwi_file)
@@ -49,7 +48,6 @@ def search_and_prepare_data(dataset_path, sub_id):
     print(f"[INFO] Found DWI path for {sub_id}: {data_path}")
     print(f"       bval={bval_file}\n       bvec={bvec_file}\n       dwi={dwi_file}\n       mask={mask_file}")
 
-    # 在 data_path 下创建 data/ 文件夹并复制
     data_dir = os.path.join(data_path, "data")
     os.makedirs(data_dir, exist_ok=True)
 
@@ -96,26 +94,19 @@ def main():
         for sub_id in subs:
             data_path, ok = search_and_prepare_data(dataset_path, sub_id)
             if not ok:
-                continue  # skip this subject
+                continue 
 
             # 2) 调用 ROI_registration_probtrack.py
-            #    需要 data_path, sub_id, FMRIB_FA_TEMPLATE, JHU50_SEED
             cmd_reg = [
                 "python", roi_registration_script,
                 "--data_path", data_path,
-                "--sub_id", sub_id,
             ]
             print(f"[INFO] Calling ROI_registration_probtrack.py for {sub_id}")
             subprocess.run(cmd_reg, check=True)
 
             # 3) 调用 ROI_calc_matrix.py
-            #    假设其默认参数即可 (roi_coord_folder="data/seeds_list_all",
-            #    input_folder="data/seeds_all", output_folder="data/con_cor"),
-            #    需要先切换到 data_path 执行(或也可直接在 search_dwi_files 这里加参数).
-            os.chdir(data_path)
             cmd_calc = [
                 "python", roi_calc_matrix_script,
-                # 如果需要自定义参数可加:
                 "--data_path", data_path
                 # "--roi_coord_folder", "data/seeds_list_all",
                 # "--input_folder",    "data/seeds_all",
@@ -126,11 +117,10 @@ def main():
             subprocess.run(cmd_calc, check=True)
             
             # 4) 调用 ROI_parcellation.py (进行分割)
-            #    该脚本应使用新的 targetmasks（包含 BN_ATLAS 分区）来生成分割结果
             cmd_parcellation = [
                 "python", roi_parcellation_script,
                 "--data_path", data_path,
-                #  "--method", "sc",  # 或其他方法：sc, kmeans, simlr
+                #  "--method", "sc",  
                 #  "--max_cl_num", "12",
                 #  "--start_seed", "1",
                 #  "--end_seed", "50"

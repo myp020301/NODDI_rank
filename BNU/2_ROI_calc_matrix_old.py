@@ -12,86 +12,83 @@ def calc_matrix_for_seed(
     seed_index: int
 ):
     """
-    针对单个 ROI 区域（seed_index）对应的 4D 文件，
-    构建连接矩阵 con_matrix (nVox x T)，阈值化并移除全 0 列，
-    然后计算相关矩阵 cor_matrix = con_matrix @ con_matrix.T。
+    For a single ROI region (seed_index) corresponding to the 4D file,
+    construct a connectivity matrix (con_matrix) of size (nVox x T), threshold it, and remove all-zero columns,
+    then compute the correlation matrix cor_matrix = con_matrix @ con_matrix.T.
     
-    最终将 con_matrix_seed_{i}.npy, cor_matrix_seed_{i}.npy, 
-    coords_seed_{i}.txt 输出到 output_folder 中。
+    Finally, output con_matrix_seed_{i}.npy, cor_matrix_seed_{i}.npy,
+    and coords_seed_{i}.txt to the output_folder.
     """
-    # 1) 读取 ROI 坐标
+    # 1) Read ROI coordinates
     coords = np.loadtxt(roi_coord_file, dtype=int)  # shape: (nVox, 3)
     n_voxels = coords.shape[0]
     if n_voxels == 0:
-        raise ValueError(f"[ERROR] 文件 {roi_coord_file} 中没有坐标！")
+        raise ValueError(f"[ERROR] No coordinates found in file {roi_coord_file}!")
     
-    # 2) 加载 4D NIfTI 数据
-    print(f"[INFO] 加载 4D 文件（ROI {seed_index}）：{fourD_file}")
+    # 2) Load the 4D NIfTI data
+    print(f"[INFO] Loading 4D file (ROI {seed_index}): {fourD_file}")
     nii4D = nib.load(fourD_file)
     vol4D = nii4D.get_fdata()  # shape: (X, Y, Z, T)
     if vol4D.ndim != 4:
-        raise ValueError(f"[ERROR] 文件 {fourD_file} 不是4D数据！")
+        raise ValueError(f"[ERROR] File {fourD_file} is not 4D data!")
     X_dim, Y_dim, Z_dim, T = vol4D.shape
-    print(f"[INFO] 4D 数据尺寸：({X_dim}, {Y_dim}, {Z_dim}, {T})，ROI 中体素数：{n_voxels}")
+    print(f"[INFO] 4D data dimensions: ({X_dim}, {Y_dim}, {Z_dim}, {T}), Number of voxels in ROI: {n_voxels}")
     
-    # 3) 构建 con_matrix: 每个 ROI 内的体素提取对应 4D 时间序列
+    # 3) Construct con_matrix: extract the 4D time series for each voxel in the ROI
     con_matrix = np.zeros((n_voxels, T), dtype=np.float32)
     for i in range(n_voxels):
         x, y, z = coords[i]
         con_matrix[i, :] = vol4D[x, y, z, :]
     
-    # 4) 阈值化处理
+    # 4) Apply thresholding
     con_matrix[con_matrix < threshold] = 0
-    # 移除全 0 列（时间点）
+    # Remove columns (time points) that are entirely 0
     col_max = con_matrix.max(axis=0)
     col_min = con_matrix.min(axis=0)
     keep_cols = ~((col_max == 0) & (col_min == 0))
     con_matrix = con_matrix[:, keep_cols]
-    print(f"[INFO] 阈值化后，con_matrix 尺寸：{con_matrix.shape}")
+    print(f"[INFO] After thresholding, con_matrix dimensions: {con_matrix.shape}")
     
-    # 5) 计算相关矩阵（或称连接矩阵）：cor_matrix = con_matrix @ con_matrix.T
+    # 5) Compute the correlation (or connectivity) matrix: cor_matrix = con_matrix @ con_matrix.T
     cor_matrix = con_matrix @ con_matrix.T  # shape: (n_voxels, n_voxels)
     
-    # 6) 保存结果到 output_folder
+    # 6) Save the results to output_folder
     os.makedirs(output_folder, exist_ok=True)
     con_out = os.path.join(output_folder, f"con_matrix_seed_{seed_index}.npy")
     cor_out = os.path.join(output_folder, f"cor_matrix_seed_{seed_index}.npy")
-    coords_out = os.path.join(output_folder, f"coords_seed_{seed_index}.txt")
     np.save(con_out, con_matrix)
     np.save(cor_out, cor_matrix)
-    np.savetxt(coords_out, coords, fmt="%d")
-    print(f"[INFO] ROI {seed_index} 处理完成，结果保存在：{output_folder}")
+    print(f"[INFO] ROI {seed_index} processing completed, results saved in: {output_folder}")
 
 def main():
     """
-    主程序：
-      --data_path: 被试工作目录（包含 data/seeds_txt_all 和 data/probtrack_old 子目录）
-      --threshold: 阈值，默认10
-      --start_seed, --end_seed: ROI 范围（默认1到50）
+    Main program:
+      --data_path: Subject's working directory (should contain subdirectories like data/seeds_txt_all and data/probtrack_old)
+      --threshold: Threshold value, default is 10
+      --start_seed, --end_seed: ROI range (default is 1 to 50)
     
-    本脚本将基于 data/seeds_txt_all 中的坐标文件，
-    以及 data/probtrack_old 中的 4D 文件（文件名格式为 ROI_{i}_merged_fdt_paths.nii.gz），
-    生成连接矩阵和相关矩阵，并保存在 data/probtrack_old/con_cor/ 目录中。
+    This script will generate the connectivity matrix and correlation matrix based on the coordinate files in data/seeds_txt_all
+    and the 4D files in data/probtrack_old (with filenames formatted as ROI_{i}_merged_fdt_paths.nii.gz),
+    and save the results in the data/probtrack_old/con_cor/ directory.
     """
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_path", required=True,
-                        help="被试数据根目录，应包含 data/seeds_txt_all/ 和 data/probtrack_old/ 等子目录")
+                        help="Root directory of the subject's data; should contain subdirectories like data/seeds_txt_all/ and data/probtrack_old/")
     parser.add_argument("--threshold", type=float, default=10.0,
-                        help="阈值（默认10）")
+                        help="Threshold value (default: 10)")
     parser.add_argument("--start_seed", type=int, default=1,
-                        help="起始 ROI 编号（默认1）")
+                        help="Starting ROI index (default: 1)")
     parser.add_argument("--end_seed", type=int, default=50,
-                        help="结束 ROI 编号（默认50）")
+                        help="Ending ROI index (default: 50)")
     args = parser.parse_args()
-
+ 
     data_path = args.data_path
     threshold = args.threshold
     start_seed = args.start_seed
     end_seed = args.end_seed
+    os.chdir(data_path)
 
-    # 拼接目录路径
     roi_coord_folder = os.path.join(data_path, "data", "seeds_txt_all")
-    # 修改4D文件路径：probtrack_old 文件夹下的 ROI_{i}_merged_fdt_paths.nii.gz
     probtrack_folder = os.path.join(data_path, "data", "probtrack_old")
     output_folder = os.path.join(probtrack_folder, "con_cor")
 
@@ -99,10 +96,10 @@ def main():
         roi_coord_file = os.path.join(roi_coord_folder, f"seed_region_{roi_idx}.txt")
         fourD_file = os.path.join(probtrack_folder, f"ROI_{roi_idx}_merged_fdt_paths.nii.gz")
         if not os.path.isfile(roi_coord_file):
-            print(f"[WARNING] 未找到 ROI 坐标文件：{roi_coord_file}，跳过 ROI {roi_idx}.")
+            print(f"[WARNING] ROI coordinate file not found: {roi_coord_file}, skipping ROI {roi_idx}.")
             continue
         if not os.path.isfile(fourD_file):
-            print(f"[WARNING] 未找到 4D 文件：{fourD_file}，跳过 ROI {roi_idx}.")
+            print(f"[WARNING] 4D file not found: {fourD_file}, skipping ROI {roi_idx}.")
             continue
 
         calc_matrix_for_seed(
