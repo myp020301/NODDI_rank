@@ -3,6 +3,10 @@ import os
 import numpy as np
 import nibabel as nib
 import argparse
+import concurrent.futures
+
+# Set the number of parallel processes; adjust as needed, e.g., os.cpu_count()
+N_JOBS = 30
 
 def calc_matrix_for_seed(
     roi_coord_file: str,
@@ -13,11 +17,9 @@ def calc_matrix_for_seed(
 ):
     """
     For a single ROI region (seed_index) corresponding to the 4D file,
-    construct a connectivity matrix (con_matrix) of size (nVox x T), threshold it, and remove all-zero columns,
-    then compute the correlation matrix cor_matrix = con_matrix @ con_matrix.T.
-    
-    Finally, output con_matrix_seed_{i}.npy, cor_matrix_seed_{i}.npy,
-    and coords_seed_{i}.txt to the output_folder.
+    construct a connectivity matrix (con_matrix) of size (nVox x T),
+    apply thresholding, remove all-zero columns, and compute the correlation matrix 
+    (cor_matrix = con_matrix @ con_matrix.T). The results are then saved in output_folder.
     """
     # 1) Read ROI coordinates
     coords = np.loadtxt(roi_coord_file, dtype=int)  # shape: (nVox, 3)
@@ -34,22 +36,21 @@ def calc_matrix_for_seed(
     X_dim, Y_dim, Z_dim, T = vol4D.shape
     print(f"[INFO] 4D data dimensions: ({X_dim}, {Y_dim}, {Z_dim}, {T}), Number of voxels in ROI: {n_voxels}")
     
-    # 3) Construct con_matrix: extract the 4D time series for each voxel in the ROI
+    # 3) Construct connectivity matrix: extract the 4D time series for each voxel in the ROI
     con_matrix = np.zeros((n_voxels, T), dtype=np.float32)
     for i in range(n_voxels):
         x, y, z = coords[i]
         con_matrix[i, :] = vol4D[x, y, z, :]
     
-    # 4) Apply thresholding
+    # 4) Apply thresholding: set values below threshold to 0 and remove columns that are entirely 0
     con_matrix[con_matrix < threshold] = 0
-    # Remove columns (time points) that are entirely 0
     col_max = con_matrix.max(axis=0)
     col_min = con_matrix.min(axis=0)
     keep_cols = ~((col_max == 0) & (col_min == 0))
     con_matrix = con_matrix[:, keep_cols]
     print(f"[INFO] After thresholding, con_matrix dimensions: {con_matrix.shape}")
     
-    # 5) Compute the correlation (or connectivity) matrix: cor_matrix = con_matrix @ con_matrix.T
+    # 5) Compute the correlation matrix: cor_matrix = con_matrix @ con_matrix.T
     cor_matrix = con_matrix @ con_matrix.T  # shape: (n_voxels, n_voxels)
     
     # 6) Save the results to output_folder
@@ -63,13 +64,12 @@ def calc_matrix_for_seed(
 def main():
     """
     Main program:
-      --data_path: Subject's working directory (should contain subdirectories like data/seeds_txt_all and data/probtrack_old)
-      --threshold: Threshold value, default is 10
-      --start_seed, --end_seed: ROI range (default is 1 to 50)
+      --data_path: Subject's working directory (should contain subdirectories such as data/seeds_txt_all and data/probtrack_old)
+      --threshold: Threshold value (default: 10)
+      --start_seed, --end_seed: ROI index range (default: 1 to 50)
     
-    This script will generate the connectivity matrix and correlation matrix based on the coordinate files in data/seeds_txt_all
-    and the 4D files in data/probtrack_old (with filenames formatted as ROI_{i}_merged_fdt_paths.nii.gz),
-    and save the results in the data/probtrack_old/con_cor/ directory.
+    The script processes the coordinate files in data/seeds_txt_all and the 4D files in data/probtrack_old,
+    generates connectivity and correlation matrices, and saves the results in the data/probtrack_old/con_cor/ directory.
     """
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_path", required=True,
@@ -92,23 +92,34 @@ def main():
     probtrack_folder = os.path.join(data_path, "data", "probtrack_old")
     output_folder = os.path.join(probtrack_folder, "con_cor")
 
-    for roi_idx in range(start_seed, end_seed + 1):
-        roi_coord_file = os.path.join(roi_coord_folder, f"seed_region_{roi_idx}.txt")
-        fourD_file = os.path.join(probtrack_folder, f"ROI_{roi_idx}_merged_fdt_paths.nii.gz")
-        if not os.path.isfile(roi_coord_file):
-            print(f"[WARNING] ROI coordinate file not found: {roi_coord_file}, skipping ROI {roi_idx}.")
-            continue
-        if not os.path.isfile(fourD_file):
-            print(f"[WARNING] 4D file not found: {fourD_file}, skipping ROI {roi_idx}.")
-            continue
+    # Use ProcessPoolExecutor to process each ROI's task in parallel
+    with concurrent.futures.ProcessPoolExecutor(max_workers=N_JOBS) as executor:
+        futures = []
+        for roi_idx in range(start_seed, end_seed + 1):
+            roi_coord_file = os.path.join(roi_coord_folder, f"seed_region_{roi_idx}.txt")
+            fourD_file = os.path.join(probtrack_folder, f"ROI_{roi_idx}_merged_fdt_paths.nii.gz")
+            if not os.path.isfile(roi_coord_file):
+                print(f"[WARNING] ROI coordinate file not found: {roi_coord_file}, skipping ROI {roi_idx}.")
+                continue
+            if not os.path.isfile(fourD_file):
+                print(f"[WARNING] 4D file not found: {fourD_file}, skipping ROI {roi_idx}.")
+                continue
 
-        calc_matrix_for_seed(
-            roi_coord_file=roi_coord_file,
-            fourD_file=fourD_file,
-            threshold=threshold,
-            output_folder=output_folder,
-            seed_index=roi_idx
-        )
+            futures.append(executor.submit(
+                calc_matrix_for_seed,
+                roi_coord_file=roi_coord_file,
+                fourD_file=fourD_file,
+                threshold=threshold,
+                output_folder=output_folder,
+                seed_index=roi_idx
+            ))
+        
+        # Wait for all tasks to complete and capture exceptions if any
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                future.result()
+            except Exception as e:
+                print(f"[ERROR] An error occurred: {e}")
 
 if __name__ == "__main__":
     main()
