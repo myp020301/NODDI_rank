@@ -99,7 +99,7 @@ def main():
     end_seed    = args.end_seed
 
     # 在 data_path 下新建一个输出目录 e.g. parcellation_sc / parcellation_kmeans / parcellation_simlr
-    outdir = os.path.join(data_path, f"data/parcellation_{method}")
+    outdir = os.path.join(data_path, f"data/new_parcellation_{method}")
     os.makedirs(outdir, exist_ok=True)
 
 
@@ -117,7 +117,7 @@ def main():
             continue
 
         # 2) 读取 con_matrix_seed_{i}.npy: data_path/con_cor/con_matrix_seed_{i}.npy
-        con_mat_path = os.path.join(data_path, "data/con_cor", f"con_matrix_seed_{i}.npy")
+        con_mat_path = os.path.join(data_path, "data/con_cor_v2", f"con_matrix_seed_{i}.npy")
         if not os.path.isfile(con_mat_path):
             print(f"[WARNING] {con_mat_path} not found, skip seed {i}")
             continue
@@ -126,7 +126,7 @@ def main():
 
         # 3) 读取 seeds_{i}_to_seed_region_all.nii.gz: data_path/seeds_all/seeds_{i}_to_seed_region_all.nii.gz
         #    用它来获取体素空间 & affine
-        fourD_nii_path = os.path.join(data_path, "data/seeds_result_all", f"seed_{i}_to_seeds_all.nii.gz")
+        fourD_nii_path = os.path.join(data_path, "data/seeds_result_all", f"seed_{i}_to_targets_all.nii.gz")
         if not os.path.isfile(fourD_nii_path):
             print(f"[WARNING] {fourD_nii_path} not found, skip seed {i}")
             continue

@@ -70,6 +70,7 @@ def main():
       - start_seed, end_seed: 种子索引范围
       - 本脚本会在 data_path 下拼出 seeds_txt_all, seeds_result_all, con_cor 目录。
     """
+    
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_path", required=True,
                         help="Base path for the subject's data, containing seeds_txt_all/ seeds_result_all/ etc.")
@@ -80,21 +81,21 @@ def main():
     parser.add_argument("--end_seed", type=int, default=50,
                         help="End seed index (default=50)")
     args = parser.parse_args()
-
+    
     data_path   = args.data_path
     threshold   = args.threshold
     start_seed  = args.start_seed
     end_seed    = args.end_seed
-
+    
     # 根据 data_path 拼接:
     roi_coord_folder = os.path.join(data_path, "data/seeds_txt_all")
     input_folder     = os.path.join(data_path, "data/seeds_result_all")
-    output_folder    = os.path.join(data_path, "data/con_cor")
-
+    output_folder    = os.path.join(data_path, "data/con_cor_v2")
+    
     # 循环处理每个种子 i
     for i in range(start_seed, end_seed + 1):
         roi_coord_file = os.path.join(roi_coord_folder, f"seed_region_{i}.txt")
-        fourD_file     = os.path.join(input_folder,     f"seed_{i}_to_seeds_all.nii.gz")
+        fourD_file     = os.path.join(input_folder,     f"seed_{i}_to_targets_all.nii.gz")
 
         if not os.path.isfile(roi_coord_file):
             print(f"[WARNING] ROI coord file not found: {roi_coord_file}, skipping.")
