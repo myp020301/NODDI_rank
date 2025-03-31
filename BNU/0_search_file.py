@@ -1,181 +1,226 @@
 #!/usr/bin/env python3
 import os
+import glob
+import re
 import argparse
-import numpy as np
-import nibabel as nib
-from sklearn.cluster import KMeans
-import scipy.sparse as sp
-import scipy.sparse.linalg as spla
-import simlr  # 导入你实现的 simlr 模块
+import subprocess
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
+def run_command(cmd):
+    """Wrapper for subprocess.run with shell=True, check=True."""
+    subprocess.run(cmd, shell=True, check=True)
 
-def spectral_clustering(adjacency_matrix, num_clusters):
+def search_and_prepare_data(dataset_path, sub_id):
     """
-    Python 版本的基于 sc3 的谱聚类函数，模仿 MATLAB 中:
-      function index = sc3(k, W)
-        ...
-      end
-
-    参数:
-    ----------
-    num_clusters : int
-        目标聚类数 k
-    adjacency_matrix : (n, n) ndarray
-        相似度矩阵 (如由 matrix @ matrix.T 得到)，形状 (n, n)
-
-    返回:
-    ----------
-    cluster_labels : (n,) ndarray
-        每个点的聚类标签 (0..k-1)
+    Search for DWI files (desc-preproc_dwi.bval/bvec/nii[.gz], desc-brain_mask.nii[.gz])
+    in the sub_id directory. If found, create a 'data' folder in the DWI path and copy these files there.
+    Returns (data_path, True) on success; otherwise returns (None, False).
     """
+    possible_paths = glob.glob(f"{dataset_path}/{sub_id}/ses-*/dwi") + [f"{dataset_path}/{sub_id}/dwi"]
+    data_path = ""
+    found = False
+    for path in possible_paths:
+        if os.path.isdir(path):
+            data_path = path
+            found = True
+            break
 
-    # 1) 计算 L_sym = D^-1/2 * (D - adjacency_matrix) * D^-1/2
-    num_points = adjacency_matrix.shape[0]
-    degree_array = np.sum(adjacency_matrix, axis=1)        # degs
-    degree_matrix = np.diag(degree_array)                  # D
-    laplacian_matrix = degree_matrix - adjacency_matrix    # L = D - W
+    if not found or not data_path:
+        print(f"[WARNING] No DWI directory found for {sub_id}, skipping.")
+        return None, False
 
-    # 避免除以零
-    degree_array[degree_array == 0] = 1e-12
-    inv_sqrt_degree = 1.0 / np.sqrt(degree_array)          # 1/(degs^0.5)
-    inv_sqrt_degree_matrix = np.diag(inv_sqrt_degree)      # D_sqrt
+    files_in_dwi = os.listdir(data_path)
+    bval_file = next((f for f in files_in_dwi if f.endswith("desc-preproc_dwi.bval")), None)
+    bvec_file = next((f for f in files_in_dwi if f.endswith("desc-preproc_dwi.bvec")), None)
+    dwi_file  = next((f for f in files_in_dwi if re.search(r"desc-preproc_dwi\.nii(\.gz)?$", f)), None)
+    mask_file = next((f for f in files_in_dwi if re.search(r"desc-brain_mask\.nii(\.gz)?$", f)), None)
 
-    laplacian_sym = inv_sqrt_degree_matrix @ laplacian_matrix @ inv_sqrt_degree_matrix
+    if not all([bval_file, bvec_file, dwi_file, mask_file]):
+        print(f"[WARNING] Missing bval/bvec/dwi/mask for {sub_id}, skipping.")
+        return None, False
 
-    # 2) 求 (num_clusters+5) 个最小特征值/特征向量
-    #    MATLAB sc3 里是 eigs(L_sym, k+5, eps)
-    #    Python 用 eigsh(which='SM') 求最小特征值
-    kplus = min(num_clusters + 5, num_points)
-    laplacian_sym_sp = sp.csr_matrix(laplacian_sym)
-    eigen_values_all, eigen_vectors_all = spla.eigsh(laplacian_sym_sp, k=kplus, which='SM')
-    # eigen_values_all, eigen_vectors_all 分别是特征值、特征向量
+    bval_file = os.path.join(data_path, bval_file)
+    bvec_file = os.path.join(data_path, bvec_file)
+    dwi_file  = os.path.join(data_path, dwi_file)
+    mask_file = os.path.join(data_path, mask_file)
 
-    # 3) 与 MATLAB 中 find(diag(d)) 类似，这里先对特征值升序排序
-    index_sorted = np.argsort(eigen_values_all)
-    sorted_values = eigen_values_all[index_sorted]
+    print(f"[INFO] Found DWI path for {sub_id}: {data_path}")
+    print(f"       bval={bval_file}\n       bvec={bvec_file}\n       dwi={dwi_file}\n       mask={mask_file}")
 
-    # 找非零特征值下标
-    nonzero_indices = np.where(np.abs(sorted_values) > 1e-12)[0]
-    if len(nonzero_indices) < num_clusters:
-        # 若非零特征值不足 num_clusters 个，则直接取前 num_clusters 个
-        chosen_indices = index_sorted[:num_clusters]
-    else:
-        # MATLAB 中 starting = idx(1), U=U(:,starting:starting+k-1)
-        starting_idx = nonzero_indices[0]
-        chosen_indices = index_sorted[starting_idx : starting_idx + num_clusters]
+    data_dir = os.path.join(data_path, "data")
+    os.makedirs(data_dir, exist_ok=True)
 
-    # 提取对应特征向量
-    eigen_vectors = eigen_vectors_all[:, chosen_indices]  # (n, num_clusters)
+    run_command(f"cp {bval_file} {data_dir}/bvals")
+    run_command(f"cp {bvec_file} {data_dir}/bvecs")
+    run_command(f"cp {dwi_file}  {data_dir}/data.nii.gz")
+    run_command(f"cp {mask_file} {data_dir}/nodif_brain_mask.nii.gz")
 
-    # 4) 行归一化
-    row_norms = np.linalg.norm(eigen_vectors, axis=1, keepdims=True)
-    row_norms[row_norms == 0] = 1e-12
-    normalized_vectors = eigen_vectors / row_norms
+    return data_path, True
 
-    # 5) kmeans
-    kmeans_model = KMeans(n_clusters=num_clusters, n_init=300, random_state=0)
-    cluster_labels = kmeans_model.fit_predict(normalized_vectors)
+def run_subject_level_steps(data_path, bedpostx_script, registration_script, sub_id):
+    """
+    Run subject-level processing steps that do not depend on ROI.
+    These include:
+      1. Bedpostx processing.
+      2. Registration processing.
+    """
+    cmd_bedpostx = [
+        "python", bedpostx_script,
+        "--data_path", data_path
+    ]
+    print(f"[INFO] Calling bedpostx processing for {sub_id}")
+    subprocess.run(cmd_bedpostx, check=True)
 
-    return cluster_labels
+    cmd_reg = [
+        "python", registration_script,
+        "--data_path", data_path,
+    ]
+    print(f"[INFO] Calling registration processing for {sub_id}")
+    subprocess.run(cmd_reg, check=True)
+
+def run_probtrack_step(data_path, roi, roi_probtrack_script):
+    cmd = [
+        "python", roi_probtrack_script,
+        "--data_path", data_path,
+        "--roi", str(roi)
+    ]
+    print(f"[INFO] Running probtrack for ROI {roi} at {data_path}")
+    subprocess.run(cmd, check=True)
+
+def run_calc_matrix_step(data_path, roi, roi_calc_matrix_script):
+    cmd = [
+        "python", roi_calc_matrix_script,
+        "--data_path", data_path,
+        "--roi", str(roi)
+    ]
+    print(f"[INFO] Running calc_matrix for ROI {roi} at {data_path}")
+    subprocess.run(cmd, check=True)
+
+def run_parcellation_step(data_path, roi, roi_parcellation_script):
+    cmd = [
+        "python", roi_parcellation_script,
+        "--data_path", data_path,
+        "--method", "sc",
+        "--roi", str(roi)
+    ]
+    print(f"[INFO] Running parcellation for ROI {roi} at {data_path}")
+    subprocess.run(cmd, check=True)
+
+def run_toMNI_step(data_path, roi, roi_toMNI_script):
+    cmd = [
+        "python", roi_toMNI_script,
+        "--data_path", data_path,
+        "--method", "sc",
+        "--roi", str(roi)
+    ]
+    print(f"[INFO] Running ROI-to-MNI for ROI {roi} at {data_path}")
+    subprocess.run(cmd, check=True)
+
+def run_roi_steps_for_all_subjects(roi, subject_data, roi_probtrack_script,
+                                   roi_calc_matrix_script, roi_parcellation_script, roi_toMNI_script):
+    """
+    For a given ROI, run the ROI-dependent steps for all subjects in sequence:
+      Step 3: Probabilistic tractography.
+      Step 4: Cross-correlation matrix calculation.
+      Step 5: Clustering/parcellation.
+      Step 6: ROI-to-MNI transformation.
+    Each step is executed in parallel across subjects, and the next step is only started once all subjects have completed the previous one.
+    """
+    steps = [
+        ("Probtrack", run_probtrack_step, roi_probtrack_script),
+        ("CalcMatrix", run_calc_matrix_step, roi_calc_matrix_script),
+        ("Parcellation", run_parcellation_step, roi_parcellation_script),
+        ("ROI_to_MNI", run_toMNI_step, roi_toMNI_script)
+    ]
+    for step_name, step_func, script in steps:
+        print(f"[INFO] Starting {step_name} for ROI {roi} across all subjects")
+        with ProcessPoolExecutor() as executor:
+            futures = []
+            for data_path in subject_data:
+                futures.append(executor.submit(step_func, data_path, roi, script))
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    print(f"[ERROR] An error occurred during {step_name} for ROI {roi}: {e}")
+        print(f"[INFO] Completed {step_name} for ROI {roi}")
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_path", required=True,
-                        help="Subject's data directory containing con_cor, seeds_all, seeds_txt_all")
-    parser.add_argument("--method", default="sc", choices=["sc","kmeans","simlr"],
-                        help="Clustering method: sc (spectral), kmeans, or simlr. Default=sc")
-    parser.add_argument("--max_cl_num", type=int, default=12,
-                        help="Maximum cluster number (default=5)")
-    parser.add_argument("--start_seed", type=int, default=1,
-                        help="Start seed index (default=1)")
-    parser.add_argument("--end_seed", type=int, default=50,
-                        help="End seed index (default=50)")
+    parser.add_argument("--base_dir", 
+                        default="/data2/mayupeng/BNU",
+                        help="Base directory path (default: /data2/mayupeng/BNU)")
+    parser.add_argument("--datasets", 
+                        nargs="+", 
+                        default=["BBP_sample"],
+                        help="List of dataset names (default: Agility_sample BBP_sample MASIVAR_sample)")
+    parser.add_argument("--bedpostx_script", 
+                        default="/data2/mayupeng/BNU/1_bedpostx.py",
+                        help="Path to the bedpostx processing script")
+    parser.add_argument("--registration_script", 
+                        default="/data2/mayupeng/BNU/2_registration.py",
+                        help="Path to the registration processing script")
+    parser.add_argument("--roi_probtrack_script", 
+                        default="/data2/mayupeng/BNU/3_modi.py",
+                        help="Path to the probtrack processing script")
+    parser.add_argument("--roi_calc_matrix_script", 
+                        default="/data2/mayupeng/BNU/4_modi.py",
+                        help="Path to calc matrix processing script")
+    parser.add_argument("--roi_parcellation_script", 
+                        default="/data2/mayupeng/BNU/5_modi.py",
+                        help="Path to parcellation processing script")
+    parser.add_argument("--roi_toMNI_script", 
+                        default="/data2/mayupeng/BNU/6_modi.py",
+                        help="Path to ROI-to-MNI processing script")
     args = parser.parse_args()
 
-    data_path   = args.data_path
-    method      = args.method
-    max_cl_num  = args.max_cl_num
-    start_seed  = args.start_seed
-    end_seed    = args.end_seed
+    BASE_DIR = args.base_dir
+    DATASETS = args.datasets
+    bedpostx_script = args.bedpostx_script
+    registration_script = args.registration_script
+    roi_probtrack_script = args.roi_probtrack_script
+    roi_calc_matrix_script = args.roi_calc_matrix_script
+    roi_parcellation_script = args.roi_parcellation_script
+    roi_toMNI_script = args.roi_toMNI_script
 
-    # 在 data_path 下新建一个输出目录 e.g. parcellation_sc / parcellation_kmeans / parcellation_simlr
-    outdir = os.path.join(data_path, f"data/new_parcellation_{method}")
-    os.makedirs(outdir, exist_ok=True)
+    data_paths_file = os.path.join(BASE_DIR, "group_data_paths.txt")
+    # Create/overwrite the file without a header.
+    with open(data_paths_file, "w") as f_out:
+        pass
 
-
-    # 对每个 i= start_seed..end_seed
-    for i in range(start_seed, end_seed+1):
-        # 1) 读取 coords: data_path/data/seeds_txt_all/seed_region_{i}.txt
-        coord_file = os.path.join(data_path, "data/seeds_txt_all", f"seed_region_{i}.txt")
-        if not os.path.isfile(coord_file):
-            print(f"[WARNING] {coord_file} not found, skip seed {i}")
+    # Loop over datasets and subjects to record data paths and run subject-level steps.
+    for dataset in DATASETS:
+        dataset_path = os.path.join(BASE_DIR, dataset)
+        if not os.path.isdir(dataset_path):
+            print(f"[ERROR] Dataset directory not found: {dataset_path}")
             continue
-        coords = np.loadtxt(coord_file, dtype=int)
-        nVox = coords.shape[0]
-        if nVox == 0:
-            print(f"[WARNING] seed_region_{i}.txt is empty, skip.")
-            continue
+        subs = [d for d in os.listdir(dataset_path)
+                if os.path.isdir(os.path.join(dataset_path, d)) and d.startswith("sub-")]
+        for sub_id in subs:
+            data_path, ok = search_and_prepare_data(dataset_path, sub_id)
+            if not ok:
+                continue 
+            # Record subject's data_path.
+            with open(data_paths_file, "a") as f_out:
+                f_out.write(f"{data_path}\n")
+            print(f"[INFO] Processing subject {sub_id} (subject-level steps)")
+            run_subject_level_steps(data_path, bedpostx_script, registration_script, sub_id)
 
-        # 2) 读取 con_matrix_seed_{i}.npy: data_path/con_cor/con_matrix_seed_{i}.npy
-        con_mat_path = os.path.join(data_path, "data/con_cor_v2", f"con_matrix_seed_{i}.npy")
-        if not os.path.isfile(con_mat_path):
-            print(f"[WARNING] {con_mat_path} not found, skip seed {i}")
-            continue
-        matrix = np.load(con_mat_path)  # shape (nVox x M)
-        # 过滤全零行? 这里不做, assume it was done or no need
+    print(f"[INFO] Group data paths recorded in {data_paths_file}")
 
-        # 3) 读取 seeds_{i}_to_seed_region_all.nii.gz: data_path/seeds_all/seeds_{i}_to_seed_region_all.nii.gz
-        #    用它来获取体素空间 & affine
-        fourD_nii_path = os.path.join(data_path, "data/seeds_result_all", f"seed_{i}_to_targets_all.nii.gz")
-        if not os.path.isfile(fourD_nii_path):
-            print(f"[WARNING] {fourD_nii_path} not found, skip seed {i}")
-            continue
-        ref_nii = nib.load(fourD_nii_path)
-        shape_3D = ref_nii.shape[:3]  # (X,Y,Z)
-        affine   = ref_nii.affine
+    # Now run ROI-dependent steps by reading the data paths from the file.
+    with open(data_paths_file, "r") as f_in:
+        subject_data = [line.strip() for line in f_in if line.strip()]
 
-        # 4) 循环 k=2..max_cl_num  clusters
-        for k in range(2, max_cl_num+1):
-            cluster_num = k
-            out_nii_name = f"seed_{i}_{cluster_num}.nii.gz"
-            out_nii_path = os.path.join(outdir, out_nii_name)
-            if os.path.isfile(out_nii_path):
-                print(f"[INFO] {out_nii_path} already exists, skip.")
-                continue
+    num_rois = 50
+    # For ROI-dependent processing, the outer loop is over ROI.
+    for roi in range(1, num_rois + 1):
+        print(f"[INFO] Starting ROI-level processing for ROI {roi}")
+        run_roi_steps_for_all_subjects(roi, subject_data, roi_probtrack_script, 
+                                       roi_calc_matrix_script, roi_parcellation_script, roi_toMNI_script)
+        print(f"[INFO] Completed ROI-level processing for ROI {roi}")
 
-            print(f"[INFO] Clustering seed={i}, cluster_num={cluster_num}, method={method}")
-            # 执行聚类
-            if method == "sc":
-                # matrix1 = matrix @ matrix.T => shape (nVox x nVox)
-                matrix1 = matrix @ matrix.T
-                # diag=0
-                np.fill_diagonal(matrix1, 0)
-                labels = spectral_clustering(matrix1, cluster_num)
-            elif method == "kmeans":
-                km = KMeans(n_clusters=cluster_num, n_init=10, random_state=0)
-                labels = km.fit_predict(matrix)
-            elif method == "simlr":
-                labels = simlr.simlr_cluster(matrix, cluster_num)
-            else:
-                print(f"[ERROR] Unknown method={method}, skip.")
-                continue
-
-            # 5) 写入新体素图
-            #    先创建一个空图, shape=ref_nii.shape[:3]
-            cluster_img = np.zeros(shape_3D, dtype=np.int16)
-
-            # coords 是 (nVox, 3), 0-based
-            # labels[i] 在 0..(cluster_num-1)
-            # 这里 +1 避免出现 0 label
-            for idx_vox in range(nVox):
-                x, y, z = coords[idx_vox]
-                cluster_img[x, y, z] = labels[idx_vox] + 1
-
-            out_nii = nib.Nifti1Image(cluster_img, affine)
-            out_nii.to_filename(out_nii_path)
-            print(f"[INFO] Saved {out_nii_path}")
-
-    print("[INFO] ROI_parcellation done for all seeds.")
+    print("[INFO] All ROI-level processing completed.")
 
 
 if __name__ == "__main__":

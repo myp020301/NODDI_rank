@@ -4,13 +4,14 @@ import subprocess
 import argparse
 import nibabel as nib
 import numpy as np
+from concurrent.futures import ProcessPoolExecutor
 
-# Set number of parallel processes if needed, but here it's not used.
-# os.environ["OMP_NUM_THREADS"] = "1"  # Uncomment if needed
+N_JOBS = 30  # Number of parallel processes (adjust based on CPU cores)
+os.environ["OMP_NUM_THREADS"] = "1"  # Avoid internal multi-threading
 
 def save_nonzero_coordinates(nifti_path, output_txt):
     """
-    Read nonzero voxel coordinates (0-based) from the NIfTI file at nifti_path,
+    Read nonzero voxel coordinates (0-based) from the nifti file at nifti_path,
     and save them into the output_txt file.
     """
     nii = nib.load(nifti_path)
@@ -47,15 +48,19 @@ def merge_roi_fdt_paths(roi_idx):
     """
     roi_folder = f"../data/probtrack_old/ROI_{roi_idx}"
     merged_file = f"../data/probtrack_old/ROI_{roi_idx}_merged_fdt_paths.nii.gz"
-    # Use wildcard to let shell expand the file list.
-    cmd_merge = f"fslmerge -t {merged_file} {roi_folder}/fdt_paths_*.nii.gz"
-    print(f"[INFO] Merging files for ROI {roi_idx} using wildcard")
-    subprocess.run(cmd_merge, shell=True, check=True)
-    print(f"[INFO] Merged file created: {merged_file}")
+    fdt_paths_list = [os.path.join(roi_folder, fname) for fname in os.listdir(roi_folder)
+                      if fname.startswith("fdt_paths_") and fname.endswith(".nii.gz")]
+    if fdt_paths_list:
+        cmd_merge = "fslmerge -t " + merged_file + " " + " ".join(fdt_paths_list)
+        print(f"[INFO] Merging {len(fdt_paths_list)} fdt_paths files for ROI {roi_idx}")
+        subprocess.run(cmd_merge, shell=True, check=True)
+        print(f"[INFO] Merged file created: {merged_file}")
+    else:
+        print(f"[WARNING] ROI {roi_idx}: No fdt_paths files found, skipping merge.")
 
 def process_roi(roi_idx):
     """
-    Process a single ROI: run probtrackx2 and then merge the fdt_paths files.
+    For a single ROI, run probtrackx2 and then merge the fdt_paths files.
     """
     try:
         run_probtrack_for_roi(roi_idx)
@@ -68,32 +73,28 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_path", required=True,
                         help="Path where the data/ subfolder is prepared")
-    parser.add_argument("--roi", type=int, required=True,
-                        help="ROI index to process (e.g., 1 to 50)")
     args = parser.parse_args()
     data_path = args.data_path
-    roi = args.roi
-
     os.chdir(data_path)
     
-    # Create necessary directories if they don't exist
     os.makedirs("data/seeds_txt_all", exist_ok=True)
     os.makedirs("data/seeds_region_all", exist_ok=True)
     
-    # Generate seed region file and save nonzero coordinates for the specified ROI only.
-    seed_out = f"data/seeds_region_all/seed_region_{roi}.nii.gz"
-    # Note: Adjust the thresholding command as needed. This command extracts the ROI with intensity equal to the ROI index.
-    subprocess.run(f"fslmaths data/JHU50_native_nn.nii.gz -thr {roi} -uthr {roi} -bin {seed_out}",
-                   shell=True, check=True)
-    seed_txt = f"data/seeds_txt_all/seed_region_{roi}.txt"
-    save_nonzero_coordinates(seed_out, seed_txt)
+    # Create seed region files and save nonzero coordinates
+    for i in range(1, 51):
+        seed_out = f"data/seeds_region_all/seed_region_{i}.nii.gz"
+        subprocess.run(f"fslmaths data/JHU50_native_nn.nii.gz -thr {i} -uthr {i} -bin {seed_out}",
+                       shell=True, check=True)
+        seed_txt = f"data/seeds_txt_all/seed_region_{i}.txt"
+        save_nonzero_coordinates(seed_out, seed_txt)
     
-    # Change directory to data.bedpostX before running probtrackx2.
     os.chdir("data.bedpostX")
-    # Process the specified ROI (only one ROI is processed, no loop or parallelism here).
-    process_roi(roi)
-    
-    print("[INFO] ROI processing completed.")
+    roi_indices = range(1, 51)
+    with ProcessPoolExecutor(max_workers=N_JOBS) as executor:
+        futures = [executor.submit(process_roi, roi_idx) for roi_idx in roi_indices]
+        for fut in futures:
+            fut.result()
+    print("[INFO] All ROI processing completed.")
 
 if __name__ == "__main__":
     main()

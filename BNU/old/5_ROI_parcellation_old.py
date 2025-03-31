@@ -7,18 +7,21 @@ from sklearn.cluster import KMeans
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 import simlr  # Import the implemented simlr module
+import concurrent.futures
+
+N_JOBS = 30
 
 def spectral_clustering(adjacency_matrix, num_clusters):
     """
     A Python version of the SC3-based spectral clustering function, mimicking the MATLAB function.
-    
+
     Parameters:
     ----------
     num_clusters : int
         The target number of clusters (k)
     adjacency_matrix : (n, n) ndarray
         The similarity matrix (e.g., obtained from matrix @ matrix.T) with shape (n, n)
-    
+
     Returns:
     ----------
     cluster_labels : (n,) ndarray
@@ -45,12 +48,14 @@ def spectral_clustering(adjacency_matrix, num_clusters):
     # 3) Sort eigenvalues and select the appropriate eigenvectors
     index_sorted = np.argsort(eigen_values_all)
     sorted_values = eigen_values_all[index_sorted]
+
     nonzero_indices = np.where(np.abs(sorted_values) > 1e-12)[0]
     if len(nonzero_indices) < num_clusters:
         chosen_indices = index_sorted[:num_clusters]
     else:
         starting_idx = nonzero_indices[0]
         chosen_indices = index_sorted[starting_idx: starting_idx + num_clusters]
+
     eigen_vectors = eigen_vectors_all[:, chosen_indices]
 
     # 4) Normalize rows
@@ -64,35 +69,35 @@ def spectral_clustering(adjacency_matrix, num_clusters):
 
     return cluster_labels
 
-def process_roi(roi, roi_coord_folder, fourD_folder, conn_folder, outdir, method, max_cl_num):
+def process_roi(i, roi_coord_folder, fourD_folder, conn_folder, outdir, method, max_cl_num):
     """
-    Process a single ROI (specified by the ROI index). For this ROI, the function:
+    Process a single ROI (seed index i). For each ROI, it:
       1) Loads the ROI coordinate file, connectivity matrix, and 4D file.
-      2) For different numbers of clusters (from 2 to max_cl_num), performs clustering
+      2) For different numbers of clusters (from 2 to max_cl_num), it performs clustering
          using the specified method (spectral clustering, k-means, or simlr) and saves the result.
     """
     # Read the ROI coordinate file
-    coord_file = os.path.join(roi_coord_folder, f"seed_region_{roi}.txt")
+    coord_file = os.path.join(roi_coord_folder, f"seed_region_{i}.txt")
     if not os.path.isfile(coord_file):
-        print(f"[WARNING] {coord_file} does not exist, aborting ROI {roi}.")
+        print(f"[WARNING] {coord_file} does not exist, skipping ROI {i}")
         return
     coords = np.loadtxt(coord_file, dtype=int)
     n_voxels = coords.shape[0]
     if n_voxels == 0:
-        print(f"[WARNING] {coord_file} is empty, aborting ROI {roi}.")
+        print(f"[WARNING] {coord_file} is empty, skipping ROI {i}")
         return
 
     # Load the connectivity matrix file from the con_cor folder
-    con_mat_path = os.path.join(conn_folder, f"con_matrix_seed_{roi}.npy")
+    con_mat_path = os.path.join(conn_folder, f"con_matrix_seed_{i}.npy")
     if not os.path.isfile(con_mat_path):
-        print(f"[WARNING] {con_mat_path} does not exist, aborting ROI {roi}.")
+        print(f"[WARNING] {con_mat_path} does not exist, skipping ROI {i}")
         return
     con_matrix = np.load(con_mat_path)  # Assumed shape: (n_voxels, M)
 
     # Read the 4D file to obtain spatial information (voxel coordinates and affine)
-    fourD_file = os.path.join(fourD_folder, f"ROI_{roi}_merged_fdt_paths.nii.gz")
+    fourD_file = os.path.join(fourD_folder, f"ROI_{i}_merged_fdt_paths.nii.gz")
     if not os.path.isfile(fourD_file):
-        print(f"[WARNING] {fourD_file} does not exist, aborting ROI {roi}.")
+        print(f"[WARNING] {fourD_file} does not exist, skipping ROI {i}")
         return
     ref_nii = nib.load(fourD_file)
     vol_shape = ref_nii.shape[:3]  # (X, Y, Z)
@@ -100,13 +105,13 @@ def process_roi(roi, roi_coord_folder, fourD_folder, conn_folder, outdir, method
 
     # For different numbers of clusters, perform clustering sequentially
     for k in range(2, max_cl_num + 1):
-        out_nii_name = f"seed_{roi}_{k}.nii.gz"
+        out_nii_name = f"seed_{i}_{k}.nii.gz"
         out_nii_path = os.path.join(outdir, out_nii_name)
         if os.path.isfile(out_nii_path):
             print(f"[INFO] {out_nii_path} already exists, skipping.")
             continue
 
-        print(f"[INFO] ROI {roi} clustering: number of clusters = {k}, method = {method}")
+        print(f"[INFO] ROI {i} clustering: number of clusters = {k}, method = {method}")
         if method == "sc":
             # Construct the similarity matrix
             sim_mat = con_matrix @ con_matrix.T
@@ -118,7 +123,7 @@ def process_roi(roi, roi_coord_folder, fourD_folder, conn_folder, outdir, method
         elif method == "simlr":
             labels = simlr.simlr_cluster(con_matrix, k)
         else:
-            print(f"[ERROR] Unknown method {method}, aborting ROI {roi}.")
+            print(f"[ERROR] Unknown method {method}, skipping ROI {i}")
             continue
 
         # Generate the segmentation result (3D NIfTI) based on ROI coordinates and cluster labels
@@ -132,32 +137,25 @@ def process_roi(roi, roi_coord_folder, fourD_folder, conn_folder, outdir, method
         print(f"[INFO] Clustering result saved: {out_nii_path}")
 
 def main():
-    """
-    Main program:
-      --data_path: Subject's data root directory (should contain subdirectories such as data/seeds_txt_all/ and data/probtrack_old/)
-      --method: Clustering method (default: sc)
-      --max_cl_num: Maximum number of clusters (default: 12)
-      --roi: ROI index to process (e.g., 1)
-    
-    The script processes the coordinate file in data/seeds_txt_all and the 4D file in data/probtrack_old
-    for the specified ROI, performs clustering for cluster numbers 2 to max_cl_num, and saves the results in
-    data/probtrack_old/con_cor/ directory.
-    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_path", required=True,
-                        help="Subject data root directory; should contain subdirectories like data/seeds_txt_all/ and data/probtrack_old/")
+                        help="Subject data root directory; should contain subdirectories like data/probtrack_old/ and data/seeds_txt_all/")
     parser.add_argument("--method", default="sc", choices=["sc", "kmeans", "simlr"],
-                        help="Clustering method: sc (spectral clustering), kmeans, or simlr (placeholder); default=sc")
+                        help="Clustering method: sc (spectral clustering), kmeans, or simlr (placeholder), default=sc")
     parser.add_argument("--max_cl_num", type=int, default=12,
                         help="Maximum number of clusters (default: 12)")
-    parser.add_argument("--roi", type=int, required=True,
-                        help="ROI index to process (e.g., 1)")
+    parser.add_argument("--start_seed", type=int, default=1,
+                        help="Starting ROI index (default: 1)")
+    parser.add_argument("--end_seed", type=int, default=50,
+                        help="Ending ROI index (default: 50)")
     args = parser.parse_args()
- 
-    data_path = args.data_path
-    method = args.method
+
+    data_path  = args.data_path
+    method     = args.method
     max_cl_num = args.max_cl_num
-    roi = args.roi
+    start_seed = args.start_seed
+    end_seed   = args.end_seed
+
     os.chdir(data_path)
 
     roi_coord_folder = os.path.join(data_path, "data", "seeds_txt_all")
@@ -166,8 +164,18 @@ def main():
     outdir = os.path.join(data_path, "data", "probtrack_old", f"parcellation_{method}")
     os.makedirs(outdir, exist_ok=True)
 
-    # Process only the specified ROI (no loop or parallelization)
-    process_roi(roi, roi_coord_folder, fourD_folder, conn_folder, outdir, method, max_cl_num)
+    # Parallelize over ROIs (outer loop) only
+    with concurrent.futures.ProcessPoolExecutor(max_workers=N_JOBS) as executor:
+        futures = []
+        for i in range(start_seed, end_seed + 1):
+            futures.append(
+                executor.submit(process_roi, i, roi_coord_folder, fourD_folder, conn_folder, outdir, method, max_cl_num)
+            )
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                future.result()
+            except Exception as e:
+                print(f"[ERROR] An error occurred: {e}")
 
     print("[INFO] ROI parcellation completed.")
 
