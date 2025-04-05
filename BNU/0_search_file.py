@@ -6,6 +6,8 @@ import argparse
 import subprocess
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
+NJOBS=10
+
 ###############################################################################
 # Utility Functions
 ###############################################################################
@@ -13,7 +15,7 @@ def run_command(cmd):
     """Wrapper for subprocess.run with shell=True, check=True."""
     subprocess.run(cmd, shell=True, check=True)
 
-def search_and_prepare_data(dataset_path, sub_id):
+def search_and_prepare_data_BNU(dataset_path, sub_id):
     """
     (Step 1) 搜索每个 subject 下的 DWI 文件（bval/bvec/dwi/mask），
     如果找到则在对应 dwi 目录下创建 data 文件夹并复制文件。
@@ -57,6 +59,46 @@ def search_and_prepare_data(dataset_path, sub_id):
     
     return data_path, True
 
+def search_and_prepare_data_HCP(dataset_path, sub_id):
+    """
+    针对 HCP_25 数据集，每个 subject 文件夹下直接存在以下文件：
+      - data.nii.gz
+      - nodif_brain_mask.nii.gz
+      - dti.bval
+      - dti.bvec
+    在 subject 文件夹下建立 data 文件夹，并将上述文件复制进去。
+    返回 (subject_folder, True) 表示成功，否则返回 (None, False)。
+    """
+    subject_dir = os.path.join(dataset_path, sub_id)
+    if not os.path.isdir(subject_dir):
+        print(f"[WARNING] Subject directory not found: {subject_dir}, skipping.")
+        return None, False
+
+    # 检查必需的文件是否存在
+    data_file = os.path.join(subject_dir, "data.nii.gz")
+    mask_file = os.path.join(subject_dir, "nodif_brain_mask.nii.gz")
+    bval_file = os.path.join(subject_dir, "dti.bval")
+    bvec_file = os.path.join(subject_dir, "dti.bvec")
+
+    if not all([os.path.exists(data_file), os.path.exists(mask_file), os.path.exists(bval_file), os.path.exists(bvec_file)]):
+        print(f"[WARNING] Missing required files in {subject_dir}, skipping.")
+        return None, False
+
+    print(f"[INFO] Found subject folder: {subject_dir}")
+    print(f"       data={data_file}\n       mask={mask_file}\n       bval={bval_file}\n       bvec={bvec_file}")
+
+    # 在 subject 文件夹下创建 data 文件夹
+    data_dir = os.path.join(subject_dir, "data")
+    os.makedirs(data_dir, exist_ok=True)
+
+    # 复制文件到 data 文件夹中
+    run_command(f"cp {data_file} {data_dir}/data.nii.gz")
+    run_command(f"cp {mask_file} {data_dir}/nodif_brain_mask.nii.gz")
+    run_command(f"cp {bval_file} {data_dir}/bvals")
+    run_command(f"cp {bvec_file} {data_dir}/bvecs")
+
+    return subject_dir, True
+
 ###############################################################################
 # Subject-Level Processing (Step 1,2: 串行处理每个 subject)
 ###############################################################################
@@ -77,16 +119,16 @@ def process_subjects(BASE_DIR, DATASETS, bedpostx_script, registration_script, d
             continue
 
         subs = [d for d in os.listdir(dataset_path)
-                if os.path.isdir(os.path.join(dataset_path, d)) and d.startswith("sub-")]
+                if os.path.isdir(os.path.join(dataset_path, d))]
         for sub_id in subs:
-            data_path, ok = search_and_prepare_data(dataset_path, sub_id)
+            data_path, ok = search_and_prepare_data_HCP(dataset_path, sub_id)
             if not ok:
                 continue
             # 记录 subject 数据路径
             with open(data_paths_file, "a") as f_out:
                 f_out.write(f"{data_path}\n")
             print(f"[INFO] Processing subject {sub_id} (subject-level steps)")
-            #run_subject_level_steps(data_path, bedpostx_script, registration_script, sub_id)
+            run_subject_level_steps(data_path, bedpostx_script, registration_script, sub_id)
 
 def run_subject_level_steps(data_path, bedpostx_script, registration_script, sub_id):
     """
@@ -167,7 +209,7 @@ def run_roi_steps_for_all_subjects(subject_data, roi_probtrack_script,
         ]
         for step_name, step_func, script in steps:
             print(f"[INFO] Starting {step_name} for ROI {roi} across all subjects")
-            with ProcessPoolExecutor() as executor:
+            with ProcessPoolExecutor(max_workers=NJOBS) as executor:
                 futures = [executor.submit(step_func, data_path, roi, script) for data_path in subject_data]
                 for future in as_completed(futures):
                     try:
@@ -235,7 +277,7 @@ def main():
     # 1. Subject-level Processing (串行)
     # ------------------------------
     print("[INFO] Starting subject-level processing...")
-    process_subjects(BASE_DIR, DATASETS, args.bedpostx_script, args.registration_script, data_paths_file)
+    #process_subjects(BASE_DIR, DATASETS, args.bedpostx_script, args.registration_script, data_paths_file)
     print(f"[INFO] Subject-level processing completed. Data paths recorded in {data_paths_file}")
 
     # 读取所有 subject data path
