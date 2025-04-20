@@ -277,7 +277,7 @@ def main():
     # 1. Subject-level Processing (串行)
     # ------------------------------
     print("[INFO] Starting subject-level processing...")
-    #process_subjects(BASE_DIR, DATASETS, args.bedpostx_script, args.registration_script, data_paths_file)
+    process_subjects(BASE_DIR, DATASETS, args.bedpostx_script, args.registration_script, data_paths_file)
     print(f"[INFO] Subject-level processing completed. Data paths recorded in {data_paths_file}")
 
     # 读取所有 subject data path
