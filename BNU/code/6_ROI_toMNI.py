@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+import os, glob, subprocess, argparse, sys
+
+# Predefined list of brain regions (corresponding to the JHU50 template)
+
+
+def run_command(cmd):
+    print(f"[CMD] {cmd}")
+    subprocess.run(cmd, shell=True, check=True)
+
+def warp_roi(input_roi, output_roi, warp_file, ref_image, premat=None):
+    cmd = f"applywarp --ref={ref_image} --in={input_roi} --warp={warp_file}"
+    if premat:
+        cmd += f" --premat={premat}"
+    cmd += f" --out={output_roi} --interp=nn"
+    run_command(cmd)
+    print(f"[INFO] Warped {input_roi} -> {output_roi}")
+
+def main():
+    parser = argparse.ArgumentParser(description="将单个 ROI 的分割结果从个体空间投影到标准空间")
+    parser.add_argument("--data_path",    required=True, help="data 目录的上级路径，包含 data/ 子目录")
+    parser.add_argument("--roi_dir", default="/data2/mayupeng/BNU/ROI",help="标准空间 ROI 文件夹，文件名 *.nii 或 *.nii.gz")
+    parser.add_argument("--roi_name", required=True,help="要处理的 ROI 名称（不含扩展名），如 MCP 或 FA_L")
+    parser.add_argument("--max_cl_num",   type=int,    default=12,   help="最大聚类数（默认 12）")
+    parser.add_argument("--method",       default="sc", choices=["sc","kmeans","simlr"], help="分割方法")
+    parser.add_argument("--use_t1",       action="store_true", help="如注册时使用了 T1，则在此开启，使用 T1→MNI 的 warp")
+    parser.add_argument("--mni_template", default=os.path.join(os.environ.get("FSLDIR","/usr/local/fsl"),"data/standard/MNI152_T1_1mm_brain.nii.gz"), help="MNI 模板，用于 applywarp -r")
+    parser.add_argument("--fa_template", default=os.path.join(os.environ.get("FSLDIR","/usr/local/fsl"),"data/standard/FMRIB58_FA_1mm.nii.gz"), help="FMRIB58 FA 1mm 模板")
+    args = parser.parse_args()
+
+    args = parser.parse_args()
+
+    os.chdir(args.data_path)
+    region   = args.roi_name
+    inp_dir  = os.path.join("data", "probtrack_old", f"parcellation_{args.method}")
+    out_base = os.path.join("data", "probtrack_old", f"parcellation_{args.method}_MNI", region)
+    os.makedirs(out_base, exist_ok=True)
+
+    # 根据流程选择 warp & premat & ref_image
+    if args.use_t1:
+        warp_file = os.path.join("data", "T1_to_MNI_warpcoef.nii.gz")
+        aff_mat   = os.path.join("data", "T1_to_DWI.mat")
+        if not (os.path.exists(warp_file) and os.path.exists(aff_mat)):
+            print(f"[ERROR] 找不到 {warp_file} 或 {aff_mat}", file=sys.stderr)
+            sys.exit(1)
+        # 反转仿射：DWI -> T1，仅在不存在时执行
+        inv_aff = os.path.join("data", "DWI_to_T1.mat")
+        if not os.path.exists(inv_aff):
+            run_command(f"convert_xfm -omat {inv_aff} -inverse {aff_mat}")
+        premat   = inv_aff
+        ref_img  = args.mni_template
+    else:
+        warp_file = os.path.join("data", "FA_to_std_warpcoef.nii.gz")
+        if not os.path.exists(warp_file):
+            print(f"[ERROR] 找不到 {warp_file}", file=sys.stderr)
+            sys.exit(1)
+        premat   = None
+        ref_img  = args.fa_template
+
+    # 批量把每个 k 的 ROI 从个体空间推到标准空间
+    for k in range(2, args.max_cl_num + 1):
+        in_roi  = os.path.join(inp_dir, f"seed_{args.roi_name}_{k}.nii.gz")
+        if not os.path.isfile(in_roi):
+            print(f"[WARN] 未找到 {in_roi}，跳过 k={k}")
+            continue
+        out_roi = os.path.join(out_base, f"seed_{k}.nii.gz")
+        warp_roi(in_roi, out_roi, warp_file, ref_img, premat=premat)
+
+    print(f"[INFO] ROI-to-MNI 完成: {region}")
+
+if __name__ == "__main__":
+    main()
