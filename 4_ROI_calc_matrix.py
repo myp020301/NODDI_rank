@@ -4,36 +4,47 @@ import numpy as np
 import nibabel as nib
 import argparse
 from scipy import sparse
-    
-def calc_matrix_for_seed(roi_coord_file, img_folder, threshold, output_folder, roi_name):
+
+import os
+import numpy as np
+import nibabel as nib
+from scipy import sparse
+
+def calc_matrix_for_seed(
+    roi_coord_file: str,
+    img_folder: str,
+    threshold: float,
+    output_folder: str,
+    roi_name: str
+): 
     """
-    构造稀疏连接矩阵和相关矩阵，基于 3D 文件：
-      - roi_coord_file: 每行 x y z 的 ROI 坐标
-      - img_folder: 存放 fdt_paths_x_y_z.nii.gz 的目录
-      - threshold: 阈值，小于该值的元素置零
-      - output_folder: 保存结果的目录
-      - seed_index: ROI 索引（用于文件命名）
+    构造连接矩阵和相关矩阵（稠密形式），严格复刻 MATLAB 实现：
+      1) 从多个 3D 文件读取数据，构造稀疏 con_mat
+      2) 删除全零列
+      3) 阈值化
+      4) 将 con_mat 转为稠密矩阵 con_dense
+      5) 计算 cor_mat = con_dense @ con_dense.T
+      6) 保存 con_dense 和 cor_mat（均为稠密）
     """
-    # 1) 读取 ROI 坐标
     coords = np.loadtxt(roi_coord_file, dtype=int)
-    n_voxels = coords.shape[0]
-    if n_voxels == 0:
+    n_vox = coords.shape[0]
+    if n_vox == 0:
         raise ValueError(f"[ERROR] ROI 坐标文件 {roi_coord_file} 中没有坐标！")
     
-    # 2) 根据第一个坐标确定图像尺寸
+    # 用首个 seed 文件确定整体体素数
     x0, y0, z0 = coords[0]
-    ref_file = os.path.join(img_folder, f"fdt_paths_{x0}_{y0}_{z0}.nii.gz")
+    ref_file = os.path.join(img_folder, f"{roi_name}_{x0}_{y0}_{z0}.nii.gz")
     if not os.path.isfile(ref_file):
         raise FileNotFoundError(f"[ERROR] 找不到参考文件: {ref_file}")
-    ref_nii = nib.load(ref_file)
-    img_shape = ref_nii.get_fdata().shape  # (X, Y, Z)
-    n_vox = np.prod(img_shape)
-    print(f"[INFO] 每个 3D 文件尺寸：{img_shape}, 展平后长度：{n_vox}")
-    
-    # 3) 构造稀疏连接矩阵
+    img_shape = nib.load(ref_file).shape
+    n_total = np.prod(img_shape)
+    print(f"[INFO] 每个 3D 文件尺寸：{img_shape}, 展平后长度：{n_total}")
+
+    # 构造稀疏连接矩阵
     rows, cols, vals = [], [], []
     for i, (x, y, z) in enumerate(coords):
-        fpath = os.path.join(img_folder, f"fdt_paths_{x}_{y}_{z}.nii.gz")
+        fpath = os.path.join(img_folder, f"{roi_name}_{x}_{y}_{z}.nii.gz")
+        print(fpath)
         if not os.path.isfile(fpath):
             print(f"[WARNING] 文件不存在: {fpath}，对应行置零")
             continue
@@ -42,32 +53,37 @@ def calc_matrix_for_seed(roi_coord_file, img_folder, threshold, output_folder, r
         rows.extend([i] * len(nz))
         cols.extend(nz.tolist())
         vals.extend(data[nz].tolist())
-    con_mat = sparse.csr_matrix((vals, (rows, cols)), shape=(n_voxels, n_vox))
-    print(f"[INFO] 原始稀疏连接矩阵：shape={con_mat.shape}, nnz={con_mat.nnz}")
-    
-    # 4) 删除全零列
+    con_mat = sparse.csr_matrix((vals, (rows, cols)), shape=(n_vox, n_total))
+
+    # 删除全零列
     col_sum = np.array(con_mat.sum(axis=0)).ravel()
     keep = np.where(col_sum != 0)[0]
     con_mat = con_mat[:, keep]
     print(f"[INFO] 删除全零列后：shape={con_mat.shape}, nnz={con_mat.nnz}")
+    # 转为稠密矩阵
+    con_dense = con_mat.toarray()
     
-    # 5) 阈值化
-    mask = con_mat.data < threshold
-    con_mat.data[mask] = 0
-    con_mat.eliminate_zeros()
-    print(f"[INFO] 阈值化后：shape={con_mat.shape}, nnz={con_mat.nnz}")
-    
-    # 6) 计算相关矩阵
-    cor_mat = con_mat.dot(con_mat.T)
-    print(f"[INFO] 稀疏相关矩阵：shape={cor_mat.shape}, nnz={cor_mat.nnz}")
-    
-    # 7) 保存结果
+    # 保存
     os.makedirs(output_folder, exist_ok=True)
-    con_out = os.path.join(output_folder, f"con_matrix_seed_{roi_name}.npz")
-    cor_out = os.path.join(output_folder, f"cor_matrix_seed_{roi_name}.npz")
-    sparse.save_npz(con_out, con_mat)
-    sparse.save_npz(cor_out, cor_mat)
+    con_out = os.path.join(output_folder, f"con_matrix_seed_{roi_name}.npy")
+    np.save(con_out, con_dense)
+    print(f"[INFO] 未阈值化稠密连接矩阵已保存至 {con_out}")
+    
+    # 阈值化
+    mask = con_dense < threshold
+    con_dense[mask] = 0
+    print(f"[INFO] 阈值化后：shape={con_dense.shape}")
+
+    # 计算稠密相关矩阵
+    cor_mat = con_dense @ con_dense.T
+    print(f"[INFO] 稠密相关矩阵 cor_mat: shape={cor_mat.shape}")
+
+    cor_out = os.path.join(output_folder, f"cor_matrix_seed_{roi_name}.npy")
+
+    np.save(cor_out, cor_mat)
     print(f"[INFO] ROI {roi_name} 处理完成，结果保存在 {output_folder}")
+
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -108,3 +124,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
