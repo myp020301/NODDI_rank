@@ -2,11 +2,9 @@
 import os
 import numpy as np
 import nibabel as nib
-from sklearn.cluster import SpectralClustering, KMeans
+from sklearn.cluster import KMeans
 import argparse
 import simlr  # 假定 simlr 模块已经实现
-from scipy import sparse
-from scipy.sparse.linalg import eigsh
 
 def sc3(k, W):
     """
@@ -44,7 +42,7 @@ def sc3(k, W):
     vals, vecs = np.linalg.eigh(L_sym)
     # 6) 选取第一个大于阈值 tol_eig 的特征值开始的 k 列
     tol_eig = 1e-8
-    idx = np.where(vals > 0)[0]
+    idx = np.where(vals > eps)[0]
     start = int(idx[0]) if idx.size > 0 else 0
     print(vals[start:start+k])
     U = vecs[:, start:start+k]

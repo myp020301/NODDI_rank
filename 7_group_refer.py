@@ -5,7 +5,56 @@ import nibabel as nib
 from sklearn.cluster import SpectralClustering
 import argparse
 from munkres import Munkres
-
+from sklearn.cluster import KMeans
+def sc3(k, W):
+    """
+    Python 版 sc3：将任何 np.matrix 转为 ndarray，并用 numpy.linalg.eigh 做全谱分解。
+    
+    参数:
+      k: 聚类簇数
+      W: 相似度矩阵，支持 np.ndarray 或 np.matrix
+    
+    返回:
+      labels: shape = (n,), 值为 0..k-1
+    """
+    # 0) 如果是 np.matrix，就转成 np.ndarray
+    W = np.asarray(W, dtype=np.float64)
+    
+    # 1) 打印输入形状
+    n, m = W.shape
+    
+    # 2) 计算度矩阵和拉普拉斯
+    degs = W.sum(axis=1)
+    D = np.diag(degs)
+    L = D - W
+    
+    # 3) 处理零度，避免除零
+    eps = np.finfo(float).eps
+    degs[degs == 0] = eps
+    
+    # 4) 构造对称归一化拉普拉斯 L_sym
+    inv_sqrt = 1.0 / np.sqrt(degs)
+    D_sqrt = np.diag(inv_sqrt)
+    L_sym = D_sqrt @ L @ D_sqrt
+    L_sym = np.asarray(L_sym)
+    
+    # 5) 全谱分解（eigh 只接受 ndarray）
+    vals, vecs = np.linalg.eigh(L_sym)
+    # 6) 选取第一个大于阈值 tol_eig 的特征值开始的 k 列
+    tol_eig = 1e-8
+    idx = np.where(vals > eps)[0]
+    start = int(idx[0]) if idx.size > 0 else 0
+    print(vals[start:start+k])
+    U = vecs[:, start:start+k]
+    
+    # 7) 行归一化
+    row_norms = np.linalg.norm(U, axis=1)
+    U_norm = U / row_norms[:, np.newaxis]
+    
+    # 8) 最后做 KMeans
+    labels = KMeans(n_clusters=k, n_init=1000, random_state=0).fit_predict(U_norm)
+    
+    return labels
 
 def group_refer(base_dir, region, subject_paths, max_clusters, method, group_threshold):
     """
@@ -91,15 +140,8 @@ def group_refer(base_dir, region, subject_paths, max_clusters, method, group_thr
                     co_occur += temp_mat
         np.fill_diagonal(co_occur, 0)
         try:
-            sc = SpectralClustering(
-                n_clusters=clus,
-                n_init=300,
-                affinity='precomputed',
-                assign_labels='kmeans',
-                random_state=0,
-                eigen_solver='arpack'
-            )
-            labels = sc.fit_predict(co_occur)
+
+            labels = sc3(clus, co_occur)
             labels = labels + 1
         except Exception as e:
             print(f"[ERROR] Clustering failed for ROI {region} cluster {clus}: {e}")
