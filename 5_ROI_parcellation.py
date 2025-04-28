@@ -42,7 +42,7 @@ def sc3(k, W):
     vals, vecs = np.linalg.eigh(L_sym)
     # 6) 选取第一个大于阈值 tol_eig 的特征值开始的 k 列
     tol_eig = 1e-8
-    idx = np.where(vals > eps)[0]
+    idx = np.where(vals > tol_eig)[0]
     start = int(idx[0]) if idx.size > 0 else 0
     print(vals[start:start+k])
     U = vecs[:, start:start+k]
@@ -148,8 +148,8 @@ def main():
                         help="ROI 名称（不含扩展名），如 MCP 或 FA_L")
     parser.add_argument("--method", default="sc", choices=["sc","kmeans","simlr"],
                         help="聚类方法，默认 sc")
-    parser.add_argument("--max_cl_num", type=int, default=5,
-                        help="最大聚类数，默认 12")
+    parser.add_argument("--max_cl_num", type=int, default=6,
+                        help="最大聚类数，默认 6")
     args = parser.parse_args()
 
     dp = args.data_path

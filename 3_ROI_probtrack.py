@@ -8,7 +8,7 @@ import glob, os
 def run_command(cmd):
     """Wrapper for subprocess.run with shell=True, check=True."""
     subprocess.run(cmd, shell=True, check=True)
-
+    
 def save_nonzero_coordinates(nifti_path, output_txt):
     """
     Read nonzero voxel coordinates (0-based) from the NIfTI file at nifti_path,
@@ -34,13 +34,13 @@ def run_probtrack_for_roi(roi_name):
     seedref = "../data/nodif_brain_mask.nii.gz"
     
     cmd = (
-        f"probtrackx2 --seed={seed_file} --mask={mask_file} "
-        f"--samples={samples} --simple --dir={output_dir} --forcedir "
-        f"--seedref={seedref} --opd"
+        f"probtrackx2 --simple --seedref={seedref} --out={roi_name} --seed={seed_file} -l "
+        f"--pd  --cthr=0.2 --nsteps=2000 --steplength=0.5 --nsamples=5000 --forcedir --opd "
+        f"--opd  --samples={samples} --mask={mask_file} --dir={output_dir} "
+        
     )
     print(f"[INFO] Running probtrackx2 for ROI {roi_name}")
     run_command(cmd)
-
 
 def main():
     parser = argparse.ArgumentParser()
@@ -50,7 +50,7 @@ def main():
     args = parser.parse_args()
     data_path = args.data_path
     roi_name = args.roi_name
-
+    
     os.chdir(data_path)
     
     # 创建必要的目录（如果不存在）

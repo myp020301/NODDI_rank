@@ -21,7 +21,7 @@ def main():
     parser.add_argument("--data_path",    required=True, help="data 目录的上级路径，包含 data/ 子目录")
     parser.add_argument("--roi_dir", default="/data2/mayupeng/BNU/ROI",help="标准空间 ROI 文件夹，文件名 *.nii 或 *.nii.gz")
     parser.add_argument("--roi_name", required=True,help="要处理的 ROI 名称（不含扩展名），如 MCP 或 FA_L")
-    parser.add_argument("--max_cl_num",   type=int,    default=12,   help="最大聚类数（默认 12）")
+    parser.add_argument("--max_cl_num",   type=int,    default=6,   help="最大聚类数（默认 6）")
     parser.add_argument("--method",       default="sc", choices=["sc","kmeans","simlr"], help="分割方法")
     parser.add_argument("--use_t1",       action="store_true", help="如注册时使用了 T1，则在此开启，使用 T1→MNI 的 warp")
     parser.add_argument("--mni_template", default=os.path.join(os.environ.get("FSLDIR","/usr/local/fsl"),"data/standard/MNI152_T1_1mm_brain.nii.gz"), help="MNI 模板，用于 applywarp -r")

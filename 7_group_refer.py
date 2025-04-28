@@ -2,7 +2,6 @@
 import os
 import numpy as np
 import nibabel as nib
-from sklearn.cluster import SpectralClustering
 import argparse
 from munkres import Munkres
 from sklearn.cluster import KMeans
@@ -42,7 +41,7 @@ def sc3(k, W):
     vals, vecs = np.linalg.eigh(L_sym)
     # 6) 选取第一个大于阈值 tol_eig 的特征值开始的 k 列
     tol_eig = 1e-8
-    idx = np.where(vals > eps)[0]
+    idx = np.where(vals > tol_eig)[0]
     start = int(idx[0]) if idx.size > 0 else 0
     print(vals[start:start+k])
     U = vecs[:, start:start+k]
@@ -56,17 +55,13 @@ def sc3(k, W):
     
     return labels
 
+import numpy as np
+import nibabel as nib
+import os
+
 def group_refer(base_dir, region, subject_paths, max_clusters, method, group_threshold):
     """
     对指定ROI进行群体统计分析，处理所有 subject 在标准空间下的分割结果。
-    
-    参数：
-      - base_dir: 基础目录（例如 BNU 根目录）
-      - region: 当前处理的 ROI（从 BRAIN_REGIONS 中索引得到的名称）
-      - subject_paths: 所有 subject 数据路径列表（支持逗号分隔的字符串或列表）
-      - max_clusters: 最大聚类数
-      - method: 分割方法（例如 "sc"）
-      - group_threshold: 群体统计阈值
     """
     if isinstance(subject_paths, str):
         subject_paths = subject_paths.split(",")
@@ -83,6 +78,7 @@ def group_refer(base_dir, region, subject_paths, max_clusters, method, group_thr
         return
     nii_template = nib.load(template_file)
     template_img = nii_template.get_fdata()
+
     sum_img = np.zeros(template_img.shape, dtype=np.float64)
 
     for sub in subject_paths:
@@ -97,7 +93,7 @@ def group_refer(base_dir, region, subject_paths, max_clusters, method, group_thr
         data = (data > 0).astype(np.float64)
         sum_img += data
 
-    # 构建群体 ROI mask
+    # 创建群体掩码
     group_mask = sum_img.copy()
     thresh_val = real_thresh * num_subjects
     group_mask[group_mask < thresh_val] = 0
@@ -131,6 +127,7 @@ def group_refer(base_dir, region, subject_paths, max_clusters, method, group_thr
             data = nii_sub.get_fdata()
             data = np.nan_to_num(data, nan=0).astype(np.float64)
             flat_data = data.ravel()
+            
             for lbl in range(1, clus + 1):
                 cluster_vox = np.where(flat_data == lbl)[0]
                 common_idx = np.where(np.isin(roi_idx, cluster_vox))[0]
@@ -138,9 +135,11 @@ def group_refer(base_dir, region, subject_paths, max_clusters, method, group_thr
                     temp_mat = np.zeros((num_voxels, num_voxels), dtype=np.float64)
                     temp_mat[np.ix_(common_idx, common_idx)] = 1
                     co_occur += temp_mat
-        np.fill_diagonal(co_occur, 0)
-        try:
 
+        np.fill_diagonal(co_occur, 0)
+
+        # 聚类
+        try:
             labels = sc3(clus, co_occur)
             labels = labels + 1
         except Exception as e:
@@ -152,11 +151,14 @@ def group_refer(base_dir, region, subject_paths, max_clusters, method, group_thr
         else:
             cluster_flat[roi_idx] = labels
         cluster_img = cluster_flat.reshape(template_img.shape)
+
+        # 保存聚类结果
         output_file = os.path.join(group_roi_dir, f"{region}_{clus}_{int(real_thresh*100)}_group.nii.gz")
         group_nii = nib.Nifti1Image(cluster_img, affine=nii_template.affine, header=nii_template.header)
         nib.save(group_nii, output_file)
         print(f"[INFO] Saved clustering result to {output_file}")
         print(f"[INFO] ROI {region} cluster {clus} Done !!")
+
 
 
 
@@ -244,8 +246,8 @@ if __name__ == "__main__":
     parser.add_argument("--roi_name", required=True,help="要处理的 ROI 名称（不含扩展名），如 MCP 或 FA_L")
     parser.add_argument("--subject_data", required=True,
                         help="File with list of subject data paths (one per line) or a comma-separated string")
-    parser.add_argument("--max_clusters", type=int, default=12,
-                        help="Maximum number of clusters (default: 12)")
+    parser.add_argument("--max_clusters", type=int, default=6,
+                        help="Maximum number of clusters (default: 6)")
     parser.add_argument("--method", default="sc", choices=["sc", "kmeans", "simlr"],
                         help="Segmentation method (default: sc)")
     parser.add_argument("--group_threshold", type=float, default=0.25,
