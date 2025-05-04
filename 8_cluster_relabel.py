@@ -19,7 +19,7 @@ def relabel_subject(base_dir, region, subj, clus, method, group_dir, thresh_int)
         return
     tpl_nii  = nib.load(tpl_path)
     tpl_data = np.nan_to_num(tpl_nii.get_fdata(), nan=0).astype(int)
-
+    
     # 个体分割结果
     indiv_path = os.path.join(
         subj, "data", "probtrack_old",
@@ -96,8 +96,8 @@ def main():
                         help="要处理的 ROI 名称，例如 MCP 或 FA_L")
     parser.add_argument("--subject_data",    required=True,
                         help="被试列表文件（每行一个路径）或逗号分隔路径字符串")
-    parser.add_argument("--max_clusters",   type=int,   default=12,
-                        help="最大簇数 (default: 12)")
+    parser.add_argument("--max_clusters",   type=int,   default=6,
+                        help="最大簇数 (default: 6)")
     parser.add_argument("--method",         default="sc",
                         help="分割方法, 如 sc (default: sc)")
     parser.add_argument("--group_threshold",type=float, default=0.25,
