@@ -8,7 +8,7 @@ def process_cluster(base_dir, roi, cl_num, mpm_thres, subjects, prob_dir):
     """
     处理每个簇，执行多数投票，并保存处理后的 MPM，同时打印各标签的体素数。
     """
-    filename = f"{roi}_{cl_num}_MPM_thr{int(mpm_thres * 100)}_swapped.nii.gz"
+    filename = f"{roi}_{cl_num}_MPM_thr{int(mpm_thres * 100)}_group.nii.gz"
     file_path = os.path.join(prob_dir, filename)
 
     # 加载图像数据
