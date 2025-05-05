@@ -87,12 +87,9 @@ def calc_matrix_for_seed(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_path", required=True,
-                        help="根目录，应包含 data/seeds_txt_all/ 和 data/probtrack_old/")
-    parser.add_argument("--roi_dir",default="/data2/mayupeng/BNU/ROI",help="标准空间 ROI 文件夹，文件名 *.nii 或 *.nii.gz")
-    parser.add_argument("--roi_name",required=True,help="要处理的 ROI 名称（不含扩展名），如 MCP 或 FA_L")
-    parser.add_argument("--threshold", type=float, default=10.0,
-                        help="阈值 (default: 10)")
+    parser.add_argument("--data_path", required=True)
+    parser.add_argument("--roi_name",required=True)
+    parser.add_argument("--threshold", type=float, default=10.0)
     
     args = parser.parse_args()
 

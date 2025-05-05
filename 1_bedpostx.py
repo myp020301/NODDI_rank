@@ -5,8 +5,7 @@ import argparse
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_path", required=True,
-                        help="Path to the data directory (contains the 'data' subfolder)")
+    parser.add_argument("--data_path", required=True)
     args = parser.parse_args()
     data_path = args.data_path
     os.chdir(data_path)
@@ -14,8 +13,8 @@ def main():
     if os.path.isdir("data.bedpostX"):
         print("[WARNING] data.bedpostX already exists, skipping bedpostx")
     else:
-        subprocess.run("bedpostx_gpu data -n 3", shell=True, check=True)
-        print("[INFO] bedpostx_gpu completed.")
+        subprocess.run("bedpostx data -n 3", shell=True, check=True)
+        print("[INFO] bedpostx completed.")
         
 if __name__ == "__main__":
     main()

@@ -141,15 +141,11 @@ def process_roi(roi_name, roi_coord_folder, img_folder, con_folder, outdir, meth
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_path", required=True,
-                        help="被试数据根目录，应包含 data/seeds_txt_all/ 和 data/probtrack_old/")
-    parser.add_argument("--roi_dir",default="/data2/mayupeng/BNU/ROI",help="标准空间 ROI 文件夹，文件名 *.nii 或 *.nii.gz")
-    parser.add_argument("--roi_name", required=True,
-                        help="ROI 名称（不含扩展名），如 MCP 或 FA_L")
-    parser.add_argument("--method", default="sc", choices=["sc","kmeans","simlr"],
-                        help="聚类方法，默认 sc")
-    parser.add_argument("--max_cl_num", type=int, default=6,
-                        help="最大聚类数，默认 6")
+    parser.add_argument("--data_path", required=True)
+    parser.add_argument("--roi_dir",default="/data2/mayupeng/BNU/ROI")
+    parser.add_argument("--roi_name", required=True)
+    parser.add_argument("--method", default="sc", choices=["sc","kmeans","simlr"])
+    parser.add_argument("--max_cl_num", type=int, default=6)
     args = parser.parse_args()
 
     dp = args.data_path

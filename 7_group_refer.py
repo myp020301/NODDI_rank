@@ -55,11 +55,8 @@ def sc3(k, W):
     
     return labels
 
-import numpy as np
-import nibabel as nib
-import os
 
-def group_refer(base_dir, region, subject_paths, max_clusters, method, group_threshold):
+def group_refer(base_dir, roi, subject_paths, max_clusters, method, group_threshold):
     """
     对指定ROI进行群体统计分析，处理所有 subject 在标准空间下的分割结果。
     """
@@ -72,18 +69,21 @@ def group_refer(base_dir, region, subject_paths, max_clusters, method, group_thr
     # 使用第一个 subject 的 seed_2 结果作为模板
     first_sub = subject_paths[0]
     template_file = os.path.join(first_sub, "data", "probtrack_old",
-                                 f"parcellation_{method}_MNI", region, "seed_2.nii.gz")
+                                 f"parcellation_{method}_MNI", roi, "seed_2.nii.gz")
     if not os.path.exists(template_file):
         print(f"[ERROR] File not found: {template_file}")
         return
     nii_template = nib.load(template_file)
     template_img = nii_template.get_fdata()
+    print("--- Debug Info ---")
+    print(f"Size of template_img: {template_img.shape}")
+    print(f"First few values of template_img: {template_img.ravel()[:10]}")
 
     sum_img = np.zeros(template_img.shape, dtype=np.float64)
 
     for sub in subject_paths:
         file_path = os.path.join(sub, "data", "probtrack_old",
-                                 f"parcellation_{method}_MNI", region, "seed_2.nii.gz")
+                                 f"parcellation_{method}_MNI", roi, "seed_2.nii.gz")
         if not os.path.exists(file_path):
             print(f"[WARNING] File not found for subject {sub}: {file_path}")
             continue
@@ -93,15 +93,22 @@ def group_refer(base_dir, region, subject_paths, max_clusters, method, group_thr
         data = (data > 0).astype(np.float64)
         sum_img += data
 
+    # 打印sum_img信息
+    print(f"Size of sum_img: {sum_img.shape}")
+    print(f"First few values of sum_img: {sum_img.ravel()[:10]}")
+
     # 创建群体掩码
     group_mask = sum_img.copy()
     thresh_val = real_thresh * num_subjects
     group_mask[group_mask < thresh_val] = 0
     group_mask[group_mask >= thresh_val] = 1
 
-    group_roi_dir = os.path.join(base_dir, "Group_xuanwu", region)
+    print(f"Size of group_mask: {group_mask.shape}")
+    print(f"First few values of group_mask: {group_mask.ravel()[:10]}")
+
+    group_roi_dir = os.path.join(base_dir, "Group_xuanwu", roi)
     os.makedirs(group_roi_dir, exist_ok=True)
-    mask_file = os.path.join(group_roi_dir, f"{region}_roimask_thr{int(real_thresh*100)}.nii.gz")
+    mask_file = os.path.join(group_roi_dir, f"{roi}_roimask_thr{int(real_thresh*100)}.nii.gz")
     mask_nii = nib.Nifti1Image(group_mask, affine=nii_template.affine, header=nii_template.header)
     nib.save(mask_nii, mask_file)
     print(f"[INFO] Saved group ROI mask to {mask_file}")
@@ -110,16 +117,16 @@ def group_refer(base_dir, region, subject_paths, max_clusters, method, group_thr
     roi_idx = np.where(flat_img >= thresh_val)[0]
     num_voxels = len(roi_idx)
     if num_voxels == 0:
-        print(f"[WARNING] No voxels meet the threshold in ROI {region}")
+        print(f"[WARNING] No voxels meet the threshold in ROI {roi}")
         return
 
     # 对聚类数从2到 max_clusters 进行群体分群
     for clus in range(2, max_clusters + 1):
-        print(f"[INFO] ROI {region} cluster {clus} is running...")
+        print(f"[INFO] ROI {roi} cluster {clus} is running...")
         co_occur = np.zeros((num_voxels, num_voxels), dtype=np.float64)
         for sub in subject_paths:
             file_path = os.path.join(sub, "data", "probtrack_old",
-                                     f"parcellation_{method}_MNI", region, f"seed_{clus}.nii.gz")
+                                     f"parcellation_{method}_MNI", roi, f"seed_{clus}.nii.gz")
             if not os.path.exists(file_path):
                 print(f"[WARNING] File not found for subject {sub}: {file_path}")
                 continue
@@ -138,12 +145,16 @@ def group_refer(base_dir, region, subject_paths, max_clusters, method, group_thr
 
         np.fill_diagonal(co_occur, 0)
 
+        # 打印co_occur信息
+        print(f"Size of co_occur: {co_occur.shape}")
+        print(f"First few values of co_occur: {co_occur.ravel()[:10]}")
+
         # 聚类
         try:
             labels = sc3(clus, co_occur)
             labels = labels + 1
         except Exception as e:
-            print(f"[ERROR] Clustering failed for ROI {region} cluster {clus}: {e}")
+            print(f"[ERROR] Clustering failed for ROI {roi} cluster {clus}: {e}")
             continue
         cluster_flat = np.zeros(flat_img.shape, dtype=np.int32)
         if labels.shape[0] != num_voxels:
@@ -152,12 +163,16 @@ def group_refer(base_dir, region, subject_paths, max_clusters, method, group_thr
             cluster_flat[roi_idx] = labels
         cluster_img = cluster_flat.reshape(template_img.shape)
 
+        # 打印cluster_img信息
+        print(f"Size of cluster_img: {cluster_img.shape}")
+        print(f"First few values of cluster_img: {cluster_img.ravel()[:10]}")
+
         # 保存聚类结果
-        output_file = os.path.join(group_roi_dir, f"{region}_{clus}_{int(real_thresh*100)}_group.nii.gz")
+        output_file = os.path.join(group_roi_dir, f"{roi}_{clus}_{int(real_thresh*100)}_group.nii.gz")
         group_nii = nib.Nifti1Image(cluster_img, affine=nii_template.affine, header=nii_template.header)
         nib.save(group_nii, output_file)
         print(f"[INFO] Saved clustering result to {output_file}")
-        print(f"[INFO] ROI {region} cluster {clus} Done !!")
+        print(f"[INFO] ROI {roi} cluster {clus} Done !!")
 
 
 
@@ -241,17 +256,12 @@ def symmetry_group(base_dir, region_l, region_r, max_clusters, group_thresh):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base_dir", required=True,
-                        help="Base directory (e.g. BNU root directory)")
-    parser.add_argument("--roi_name", required=True,help="要处理的 ROI 名称（不含扩展名），如 MCP 或 FA_L")
-    parser.add_argument("--subject_data", required=True,
-                        help="File with list of subject data paths (one per line) or a comma-separated string")
-    parser.add_argument("--max_clusters", type=int, default=6,
-                        help="Maximum number of clusters (default: 6)")
-    parser.add_argument("--method", default="sc", choices=["sc", "kmeans", "simlr"],
-                        help="Segmentation method (default: sc)")
-    parser.add_argument("--group_threshold", type=float, default=0.25,
-                        help="Group threshold (default: 0.25)")
+    parser.add_argument("--base_dir", required=True)
+    parser.add_argument("--roi_name", required=True)
+    parser.add_argument("--subject_data", required=True)
+    parser.add_argument("--max_clusters", type=int, default=6)
+    parser.add_argument("--method", default="sc", choices=["sc", "kmeans", "simlr"])
+    parser.add_argument("--group_threshold", type=float, default=0.25)
     args = parser.parse_args()
 
     # 读取 subject 数据列表（支持逗号分隔的字符串或文件内容）
@@ -264,11 +274,11 @@ if __name__ == "__main__":
     region_name = args.roi_name
     group_refer(args.base_dir, region_name, subjects, args.max_clusters, args.method, args.group_threshold)
     
-    # 如果 region 名称中含有 "L"，则需要对左右标签进行对称统一 
+    # 如果 roi 名称中含有 "L"，则需要对左右标签进行对称统一 
     if region_name.endswith("_L"):
         # 此处假定对称文件的命名规则为：
-        # 左侧文件： f"{region}_L_{clus}_{int(real_thresh*100)}_group.nii.gz"
+        # 左侧文件： f"{roi}_L_{clus}_{int(real_thresh*100)}_group.nii.gz"
         # 右侧文件： f"{region_R}_{clus}_{int(real_thresh*100)}_group.nii.gz"
-        # 其中右侧 ROI 名称由 region 中的 "L" 替换为 "R"
+        # 其中右侧 ROI 名称由 roi 中的 "L" 替换为 "R"
         region_r = region_name[:-1] + "R"
         symmetry_group(args.base_dir, region_name, region_r, args.max_clusters, args.group_threshold)

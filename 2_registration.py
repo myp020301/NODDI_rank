@@ -9,12 +9,12 @@ def run_command(cmd):
 
 def main():
     parser = argparse.ArgumentParser(description="将单个标准空间 ROI 配准到被试 DWI 空间并输出 ROI 掩膜")
-    parser.add_argument("--data_path", required=True, help="被试目录，包含 nodif_brain.nii.gz；若启用 T1 流程，还需包含 T1_brain.nii.gz 和 data/dtifit_FA.nii.gz")
-    parser.add_argument("--roi_dir",default="/data2/mayupeng/BNU/ROI",help="标准空间 ROI 文件夹，文件名 *.nii 或 *.nii.gz")
-    parser.add_argument("--roi_name",required=True,help="要处理的 ROI 名称（不含扩展名），如 MCP 或 FA_L")
-    parser.add_argument("--mni_template", default=os.path.join(os.environ.get("FSLDIR","/usr/local/fsl"),"data/standard/MNI152_T1_1mm_brain.nii.gz"), help="MNI152 T1 1mm 脑模板")
-    parser.add_argument("--fa_template", default=os.path.join(os.environ.get("FSLDIR","/usr/local/fsl"),"data/standard/FMRIB58_FA_1mm.nii.gz"), help="FMRIB58 FA 1mm 模板")
-    parser.add_argument("--use_t1", action="store_true", help="启用基于 T1 的注册流程；否则使用 FA↔FA 流程")
+    parser.add_argument("--data_path", required=True)
+    parser.add_argument("--roi_dir",default="/data2/mayupeng/BNU/ROI")
+    parser.add_argument("--roi_name",required=True)
+    parser.add_argument("--mni_template", default=os.path.join(os.environ.get("FSLDIR","/usr/local/fsl"),"data/standard/MNI152_T1_1mm_brain.nii.gz"))
+    parser.add_argument("--fa_template", default=os.path.join(os.environ.get("FSLDIR","/usr/local/fsl"),"data/standard/FMRIB58_FA_1mm.nii.gz"))
+    parser.add_argument("--use_t1", action="store_true")
     args = parser.parse_args()
 
     data_path = args.data_path
@@ -42,29 +42,56 @@ def main():
 
     if args.use_t1:
         # 2a. 检查 T1 相关变换是否已计算
-        mat_t1_dwi = os.path.join(out_dir, "T1_to_DWI.mat")
+        mat_t1_dwi  = os.path.join(out_dir, "T1_to_DWI.mat")
         warp_std2t1 = os.path.join(out_dir, "std2T1_warp.nii.gz")
         if not (os.path.exists(mat_t1_dwi) and os.path.exists(warp_std2t1)):
             t1 = os.path.join(data_path, "data", "T1_brain.nii.gz")
             if not os.path.exists(t1):
                 print("[ERROR] 未找到 T1_brain.nii.gz", file=sys.stderr)
                 sys.exit(1)
-            # T1 to DWI (b0)
-            run_command(f"flirt -in {t1} -ref {nodif} -omat {mat_t1_dwi} -out {out_dir}/rT1_in_DWI.nii.gz")
-            # T1 to MNI (affine)
-            run_command(f"flirt -in {t1} -ref {args.mni_template} -omat {out_dir}/T1_to_MNI_aff.mat -out {out_dir}/rT1_in_MNI_aff.nii.gz")
-            # Nonlinear warp T1->MNI
-            run_command(f"fnirt --in={t1} --aff={out_dir}/T1_to_MNI_aff.mat --ref={args.mni_template} --cout={out_dir}/T1_to_MNI_warpcoef.nii.gz")
-            # Invert warp (standard->T1)
-            run_command(f"invwarp -w {out_dir}/T1_to_MNI_warpcoef.nii.gz -r {t1} -o {warp_std2t1}")
-
-        # 3a. 应用配准，仅 do applywarp
+            
+            # 1) T1 → DWI (b0) 空间
+            run_command(
+                f"flirt -in {t1} "
+                f"-ref {nodif} "
+                f"-omat {mat_t1_dwi} "
+                f"-out {out_dir}/rT1_in_DWI.nii.gz"
+            )
+            '''
+            # 2) rT1_in_DWI → MNI (仿射)
+            run_command(
+                f"flirt -in {out_dir}/rT1_in_DWI.nii.gz "
+                f"-ref {args.mni_template} "
+                f"-omat {out_dir}/rT1_to_MNI_aff.mat "
+                f"-out {out_dir}/rT1_in_MNI_aff.nii.gz"
+            )
+    
+            # 3) 非线性配准 rT1_in_DWI → MNI
+            run_command(
+                f"fnirt --in={out_dir}/rT1_in_DWI.nii.gz "
+                f"--aff={out_dir}/rT1_to_MNI_aff.mat "
+                f"--ref={args.mni_template} "
+                f"--cout={out_dir}/rT1_to_MNI_warpcoef.nii.gz"
+            )
+    
+            # 4) 反转：MNI → DWI（rT1 空间）
+            run_command(
+                f"invwarp -w {out_dir}/rT1_to_MNI_warpcoef.nii.gz "
+                f"-r {out_dir}/rT1_in_DWI.nii.gz "
+                f"-o {warp_std2t1}"
+            )
+        
+        # 3a. 应用反转后的 warp，把标准空间模板拉到 DWI 空间
         run_command(
-            f"applywarp --ref={nodif} --in={roi_file} --warp={warp_std2t1} "
-            f"--premat={mat_t1_dwi} --out={out_dir}/{roi_name}_mask.nii.gz --interp=nn"
+            f"applywarp "
+            f"--ref={out_dir}/rT1_in_DWI.nii.gz "
+            f"--in={roi_file} "
+            f"--warp={warp_std2t1} "
+            f"--out={out_dir}/{roi_name}_mask.nii.gz "
+            f"--interp=nn"
         )
-        print(f"[INFO] 基于 T1 流程完成, 输出: {out_dir}/{roi_name}_mask.nii.gz")
-
+        print(f"[INFO] 基于 T1→DWI→MNI→DWI 的流程完成, 输出: {out_dir}/{roi_name}_mask.nii.gz")
+'''
     else:
         # 2b. 检查 FA 相关变换是否已计算
         fa = os.path.join(data_path, "data", "dtifit_FA.nii.gz")

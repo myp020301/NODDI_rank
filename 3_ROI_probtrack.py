@@ -44,9 +44,9 @@ def run_probtrack_for_roi(roi_name):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_path", required=True,help="Path where the data/ subfolder is prepared")
-    parser.add_argument("--roi_dir",default="/data2/mayupeng/BNU/ROI",help="标准空间 ROI 文件夹，文件名 *.nii 或 *.nii.gz")
-    parser.add_argument("--roi_name",required=True,help="要处理的 ROI 名称（不含扩展名），如 MCP 或 FA_L")
+    parser.add_argument("--data_path", required=True)
+    parser.add_argument("--roi_dir",default="/data2/mayupeng/BNU/ROI")
+    parser.add_argument("--roi_name",required=True)
     args = parser.parse_args()
     data_path = args.data_path
     roi_name = args.roi_name
