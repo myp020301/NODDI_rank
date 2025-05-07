@@ -2,7 +2,6 @@
 import os, glob, re, argparse, subprocess, sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-NJOBS = 20
 
 def run_command(command: str):
     """Run a shell command and exit on failure."""
@@ -90,20 +89,23 @@ def prepare_subject_data_xuanwu(dataset_directory: str,
     run_command(cmd)
     return subject_dir, True
 
-def run_bedpostx(data_directories, bedpostx_script, njobs):
-    def _worker(data_dir):
-        run_command(f"python {bedpostx_script} --data_path {data_dir}")
+# 顶层定义，保证它是 module-level
+def _worker(subject_path, bedpostx_script):
+    # … 具体执行逻辑 …
+    run_command(f"python {bedpostx_script} --data_path {subject_path} ")
 
-    print(f"[INFO] 开始并行运行 bedpostx：{len(data_directories)} 个被试，进程数={njobs}")
+def run_bedpostx(subject_paths, bedpostx_script, njobs):
     with ProcessPoolExecutor(max_workers=njobs) as ex:
-        futures = {ex.submit(_worker, d): d for d in data_directories}
-        for future in as_completed(futures):
-            data_dir = futures[future]
+        futures = [
+            ex.submit(_worker, p, bedpostx_script)
+            for p in subject_paths
+        ]
+        for f in as_completed(futures):
             try:
-                future.result()
-                print(f"[INFO] 完成 bedpostx: {data_dir}")
+                f.result()
             except Exception as e:
-                print(f"[ERROR] bedpostx 失败 ({data_dir}): {e}")
+                print(f"[ERROR] bedpostx 失败 ({p}): {e}")
+
 
 # Steps 2-6: per-ROI per-subject processing
 def run_roi_step(data_directory, script_path, roi_dir=None, roi_name=None, use_t1=False):
@@ -113,41 +115,92 @@ def run_roi_step(data_directory, script_path, roi_dir=None, roi_name=None, use_t
         cmd += " --use_t1"
     run_command(cmd)
 
-def run_group_analysis(subject_paths, group_refer_script, cluster_relabel_script, calc_mpm_script,
-                       postprocess_mpm_script, base_directory, roi_name, njobs):
+def run_group_analysis(subject_paths,
+                       group_refer_script,
+                       cluster_relabel_script,
+                       calc_mpm_script,
+                       postprocess_mpm_script,
+                       validation_script,
+                       base_directory,
+                       roi_name,
+                       njobs):
     subjects = ",".join(subject_paths)
+    
+    # Step 7: Group refer（串行）
+    print(f"[INFO] Step 7: Group refer for ROI {roi_name}")
+    run_command(
+        f"python {group_refer_script} "
+        f"--base_dir {base_directory} "
+        f"--subject_data {subjects} "
+        f"--roi_name {roi_name}"
+    )
+    
+    # Steps 8–11: 串行执行 relabel, calc_mpm, postprocess, validation
+    print(f"[INFO] Steps 8–11: Serial for ROI {roi_name}")
+    for script in [
+        cluster_relabel_script,
+        calc_mpm_script,
+        postprocess_mpm_script,
+        validation_script  
+    ]:
+        cmd = (
+            f"python {script} "
+            f"--base_dir {base_directory} "
+            f"--roi_name {roi_name} "
+            f"--subject_data {subjects} "
+            f"--njobs {njobs}"
+        )
+        print(f"[INFO] Running {os.path.basename(script)} for ROI {roi_name}")
+        run_command(cmd)
 
-    # Step 7: Group refer
-    '''
-    run_command(
-        f"python {group_refer_script} --base_dir {base_directory} --subject_data {subjects} --roi_name {roi_name}"
-    )
-    
-    # Step 8: Cluster relabel
-    
-    run_command(
-        f"python {cluster_relabel_script} --base_dir {base_directory} --subject_data {subjects} --roi_name {roi_name} --njobs {njobs}"
-    )
-    
-    # Step 9: Calc MPM, using defaults for other parameters
-    run_command(
-        f"python {calc_mpm_script} --base_dir {base_directory} --roi_name {roi_name} --subject_data {subjects} --njobs {njobs}"
-    )
-    '''
-    # Step 10: Post-process MPM
-    print(f"[INFO] Step 10: Post-process MPM for ROI {roi_name}")
-    run_command(
-        f"python {postprocess_mpm_script} --base_dir {base_directory} --roi_name {roi_name} --subject_data {subjects} --njobs {njobs}"
-    )
+    print(f"[INFO] Steps 8–11 completed for ROI {roi_name}")
 
 
 def process_single_roi(base_directory, use_t1, roi_name, roi_dir, subject_paths,
                        registration_script, roi_probtrack_script, roi_calc_matrix_script,
                        roi_parcellation_script, roi_toMNI_script,
                        group_refer_script, cluster_relabel_script, calc_mpm_script,
-                       postprocess_mpm_script, njobs):
+                       postprocess_mpm_script, validation_script, njobs):
     print(f"[INFO] ==== 开始处理 ROI {roi_name} ====")
     
+    with ProcessPoolExecutor(max_workers=njobs) as ex:
+        # 步骤 2: Registration
+        
+        print(f"[INFO] Step 2: Registration for ROI {roi_name}")
+        futures = [ex.submit(
+            run_roi_step, p, registration_script, roi_dir, roi_name, use_t1) for p in subject_paths]
+        for f in as_completed(futures):
+            try: f.result()
+            except Exception as e: print(f"[ERROR] Registration ROI {roi_name}: {e}")
+            
+        # 步骤 3: Probtrack
+        print(f"[INFO] Step 3: Probtrack for ROI {roi_name}")
+        futures = [ex.submit(run_roi_step, p, roi_probtrack_script, roi_dir, roi_name) for p in subject_paths]
+        for f in as_completed(futures):
+            try: f.result()
+            except Exception as e: print(f"[ERROR] Probtrack ROI {roi_name}: {e}")
+        
+        # 步骤 4: CalcMatrix
+        print(f"[INFO] Step 4: CalcMatrix for ROI {roi_name}")
+        futures = [ex.submit(run_roi_step, p,  roi_calc_matrix_script, roi_dir, roi_name) for p in subject_paths]
+        for f in as_completed(futures):
+            try: f.result()
+            except Exception as e: print(f"[ERROR] CalcMatrix ROI {roi_name}: {e}")
+        
+        # 步骤 5: Parcellation
+        print(f"[INFO] Step 5: Parcellation for ROI {roi_name}")
+        futures = [ex.submit(run_roi_step, p,  roi_parcellation_script, roi_dir, roi_name) for p in subject_paths]
+        for f in as_completed(futures):
+            try: f.result()
+            except Exception as e: print(f"[ERROR] Parcellation ROI {roi_name}: {e}")
+        
+        # 步骤 6: ROI-to-MNI（保留原逻辑）
+        print(f"[INFO] Step 6: ROI-to-MNI for ROI {roi_name}")
+        futures = [ex.submit(run_roi_step, p, roi_toMNI_script, roi_dir, roi_name, use_t1) for p in subject_paths]
+        for f in as_completed(futures):
+            try: f.result()
+            except Exception as e: print(f"[ERROR] ROI-to-MNI ROI {e}")
+            
     # Steps 7,8 & 9: Group analysis, relabel, and MPM
     print(f"[INFO] Step 7-10: Group analysis, relabel & MPM for ROI {roi_name}")
     run_group_analysis(subject_paths,
@@ -155,6 +208,7 @@ def process_single_roi(base_directory, use_t1, roi_name, roi_dir, subject_paths,
                        cluster_relabel_script,
                        calc_mpm_script,
                        postprocess_mpm_script,
+                       validation_script,
                        base_directory,
                        roi_name,
                        njobs)
@@ -175,19 +229,17 @@ if __name__ == "__main__":
     parser.add_argument("--roi_toMNI_script", default="/data2/mayupeng/BNU/6_ROI_toMNI.py")
     parser.add_argument("--group_refer_script", default="/data2/mayupeng/BNU/7_group_refer.py")
     parser.add_argument("--cluster_relabel_script", default="/data2/mayupeng/BNU/8_cluster_relabel.py")
-    parser.add_argument("--calc_mpm_script", default="/data2/mayupeng/BNU/9_calc_mpm.py",
-                        help="MPM 计算脚本路径")
-    parser.add_argument("--postprocess_mpm_script", default="/data2/mayupeng/BNU/10_postprocess_mpm.py",
-                        help="MPM后处理脚本路径")
+    parser.add_argument("--calc_mpm_script", default="/data2/mayupeng/BNU/9_calc_mpm.py")
+    parser.add_argument("--postprocess_mpm_script", default="/data2/mayupeng/BNU/10_postprocess_mpm.py")
+    parser.add_argument("--validation_script", default="/data2/mayupeng/BNU/11_validation.py")
     parser.add_argument("--use_t1", action="store_true", help="启用 T1 注册")
-    parser.add_argument("--njobs", type=int, default=5, help="并行作业数量 (default:5)")
+    parser.add_argument("--njobs", type=int, default=4, help="并行作业数量 (default:5)")
     args = parser.parse_args()
 
     # 准备数据路径文件
     data_paths_file = os.path.join(args.base_dir, "group_data_paths.txt")
     open(data_paths_file, 'w').close()
-
-    # 收集被试路径并执行 BedpostX
+    
     all_subject_paths = []
     for ds in args.datasets:
         ds_dir = os.path.join(args.base_dir, ds)
@@ -195,23 +247,31 @@ if __name__ == "__main__":
             print(f"[ERROR] 找不到目录: {ds_dir}")
             continue
         for subj in os.listdir(ds_dir):
-            path, ok = prepare_subject_data_xuanwu(ds_dir, subj, args.use_t1)
+            data_path, ok = prepare_subject_data_xuanwu(ds_dir, subj, args.use_t1)
             if not ok:
                 continue
-            all_subject_paths.append(path)
+            # 记录 subject 数据路径
+            with open(data_paths_file, "a") as f_out:
+                f_out.write(f"{data_path}\n")
+            all_subject_paths.append(data_path)
+    print(f"[INFO] Running bedpostx for subject {subj}")
+    run_bedpostx(all_subject_paths, args.bedpostx_script, args.njobs)
     
     # 读取 ROI 列表
     with open(args.roi_list_file) as f:
         roi_names = [l.strip() for l in f if l.strip()]
 
+    with open(data_paths_file, "r") as f:
+        subject_data = [line.strip() for line in f if line.strip()]
+        
     # 针对每个 ROI 执行流水线
-    for roi in roi_names:
+    for roi in roi_names[:1]:
         process_single_roi(
             args.base_dir,
             args.use_t1,
             roi,
             args.roi_dir,
-            all_subject_paths,
+            subject_data,
             args.registration_script,
             args.roi_probtrack_script,
             args.roi_calc_matrix_script,
@@ -221,5 +281,6 @@ if __name__ == "__main__":
             args.cluster_relabel_script,
             args.calc_mpm_script,
             args.postprocess_mpm_script,
+            args.validation_script,
             args.njobs
         )

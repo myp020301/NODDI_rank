@@ -19,9 +19,9 @@ def process_cluster(base_dir, roi, cl_num, mpm_thres, subjects, prob_dir):
     m, n, p = img.shape
 
     coords = [(i, j, k)
-              for i in range(1, m-1)
-              for j in range(1, n-1)
-              for k in range(1, p-1)
+              for i in range(0, m)
+              for j in range(0, n)
+              for k in range(0, p)
               if img[i, j, k] != 0]
 
     # 多数投票
