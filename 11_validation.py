@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-import os
+import os, warnings
 import argparse
 import numpy as np
 import nibabel as nib
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from validation_metrics import v_dice, v_nmi, v_cramerv
-
+from scipy.ndimage import binary_dilation
+from scipy.spatial.distance import cosine
+from scipy.spatial.distance import pdist, squareform
+from sklearn.metrics import silhouette_samples
+from typing import List, Tuple, Dict, Any 
+from scipy.ndimage import label as bwlabel
 
 def connect6mean(img, i, j, k):
     return (
@@ -45,7 +50,6 @@ def cluster_mpm_validation(base_dir, roi, subjects, method, kc, mpm_thres):
         # Accumulate raw counts for each cluster
         for ki in range(1, kc+1):
             prob_cluster[..., ki-1] += (data == ki).astype(float)
-
 
     # Build threshold mask
     thresh = mpm_thres * len(subjects)
@@ -274,6 +278,547 @@ def validation_leave_one_out(base_dir, roi, subjects, method,
             )
     print(f"Leave-one-out validation done! Results in {out_dir}")
 
+def validation_group_hi_vi(base_dir, roi, subjects, method,
+                            max_clusters, group_threshold, mpm_thres, njobs):
+    """
+    Compute group Hierarchy Index (HI) and Variation of Information (VI)
+    between successive K values for group MPMs.
+    """
+    n_sub = len(subjects)
+    thr = group_threshold or np.finfo(float).eps
+    vox_dir = os.path.join(base_dir, f"MPM_{n_sub}")
+    out_dir = os.path.join(base_dir, f"validation_{n_sub}")
+    os.makedirs(out_dir, exist_ok=True)
+
+    group_hi = np.zeros(max_clusters+1)
+    group_vi = np.zeros(max_clusters+1)
+
+    for kc in range(3, max_clusters+1):
+        # load MPM for kc-1 and kc
+        f1 = os.path.join(vox_dir, f"{roi}_{kc-1}_MPM_thr{int(mpm_thres*100)}_group.nii.gz")
+        f2 = os.path.join(vox_dir, f"{roi}_{kc}_MPM_thr{int(mpm_thres*100)}_group.nii.gz")
+        m1 = np.nan_to_num(nib.load(f1).get_fdata(), nan=0).astype(int)
+        m2 = np.nan_to_num(nib.load(f2).get_fdata(), nan=0).astype(int)
+
+        # compute HI: for each cluster in m2, find max overlap fraction in m1
+        xi = []
+        for i in range(1, kc+1):
+            mask_i = (m2 == i)
+            counts = []
+            for j in range(1, kc):
+                counts.append(np.sum((m1[mask_i] == j)))
+            total = np.sum(counts)
+            if total > 0:
+                xi.append(np.max(counts) / total)
+        group_hi[kc] = np.nanmean(xi) if xi else np.nan
+
+        # compute VI between m1 and m2
+        _, group_vi[kc] = v_nmi(m1, m2)
+
+    # save results
+    np.savez(os.path.join(out_dir, f"{roi}_index_group_hi_vi.npz"),
+             group_hi=group_hi, group_vi=group_vi)
+    with open(os.path.join(out_dir, f"{roi}_index_group_hi_vi.txt"), 'w') as fp:
+        for kc in range(3, max_clusters+1):
+            fp.write(f"cluster: {kc-1}->{kc} hi={group_hi[kc]:.4f} vi={group_vi[kc]:.4f}\n")
+    print("Group HI/VI validation done!")
+
+
+def _one_indi_hi_vi(idx, subjects, base_dir, roi, method,
+                    max_clusters, group_threshold, mpm_thres):
+    """
+    并行计算单个被试的 HI/VI。
+    """
+    sub = subjects[idx]
+    # 加载 Mask
+    thr = group_threshold if group_threshold != 0 else np.finfo(float).eps
+    mask_dir = os.path.join(base_dir, "Group_xuanwu", roi)
+    mask = np.nan_to_num(
+        nib.load(os.path.join(mask_dir, f"{roi}_roimask_thr{int(thr*100)}.nii.gz")).get_fdata(),
+        nan=0
+    ).astype(bool)
+
+    hi_row = np.full(max_clusters+1, np.nan)
+    vi_row = np.full(max_clusters+1, np.nan)
+
+    for kc in range(3, max_clusters+1):
+        # load mpm (kc-1 vs kc)
+        fn1 = os.path.join(
+            base_dir, sub,
+            f"data/probtrack_old/parcellation_{method}_MNI/{roi}/seed_{kc-1}_relabel_group.nii.gz"
+        )
+        fn2 = os.path.join(
+            base_dir, sub,
+            f"data/probtrack_old/parcellation_{method}_MNI/{roi}/seed_{kc}_relabel_group.nii.gz"
+        )
+        img1 = np.nan_to_num(nib.load(fn1).get_fdata(), nan=0).astype(int) * mask
+        img2 = np.nan_to_num(nib.load(fn2).get_fdata(), nan=0).astype(int) * mask
+
+        # 构建 xmatrix 并计算 xi
+        xmat = np.zeros((kc, kc-1), dtype=int)
+        xi   = np.zeros(kc, dtype=float)
+        for i in range(1, kc+1):
+            idx_vox = (img2 == i)
+            for j in range(1, kc):
+                xmat[i-1, j-1] = np.count_nonzero(img1[idx_vox] == j)
+            row = xmat[i-1]
+            xi[i-1] = row.max() / row.sum() if row.sum()>0 else np.nan
+
+        hi_row[kc] = np.nanmean(xi)
+        vi_row[kc] = v_nmi(img1, img2)[1]
+
+    return idx, hi_row, vi_row
+
+
+# 2. 在 validation_indi_hi_vi 中直接引用顶层函数
+def validation_indi_hi_vi(base_dir, roi, subjects, method,
+                          max_clusters, njobs, group_threshold, mpm_thres):
+    sub_num = len(subjects)
+    out_dir = os.path.join(base_dir, f"validation_{sub_num}")
+    os.makedirs(out_dir, exist_ok=True)
+
+    indi_hi = np.full((sub_num, max_clusters+1), np.nan)
+    indi_vi = np.full((sub_num, max_clusters+1), np.nan)
+
+    # 并行提交
+    with ProcessPoolExecutor(max_workers=njobs) as exe:
+        futures = {
+            exe.submit(
+                _one_indi_hi_vi,
+                i, subjects, base_dir, roi, method,
+                max_clusters, group_threshold, mpm_thres
+            ): i
+            for i in range(sub_num)
+        }
+        for fut in as_completed(futures):
+            idx, hi_row, vi_row = fut.result()
+            indi_hi[idx] = hi_row
+            indi_vi[idx] = vi_row
+
+    # 保存 .npz 和 .txt ...
+    np.savez(os.path.join(out_dir, f"{roi}_index_indi_hi_vi.npz"),
+             indi_hi=indi_hi, indi_vi=indi_vi)
+    with open(os.path.join(out_dir, f"{roi}_index_indi_hi_vi.txt"), 'w') as fp:
+        for kc in range(3, max_clusters+1):
+            vals_hi = indi_hi[:,kc]
+            vals_vi = indi_vi[:,kc]
+            fp.write(
+                f"cluster_num: {kc-1}->{kc}\n"
+                f"avg_indi_hi: {np.nanmean(vals_hi)}, std: {np.nanstd(vals_hi)}, "
+                f"median: {np.nanmedian(vals_hi)}\n"
+                f"avg_indi_vi: {np.nanmean(vals_vi)}, std: {np.nanstd(vals_vi)}, "
+                f"median: {np.nanmedian(vals_vi)}\n\n"
+            )
+    print(f"Individual HI/VI done! Results in {out_dir}")   
+
+# ──────────────────────── 辅助：邻接矩阵 ────────────────────────
+def _adjacency(img: np.ndarray, kc: int, struct: np.ndarray):
+    """计算 kc×kc 的邻接计数矩阵，并按行归一化（除非 kc==2）。"""
+    mat = np.zeros((kc, kc), dtype=float)
+    for i in range(1, kc + 1):
+        mask_i = img == i
+        dil_i = binary_dilation(mask_i, structure=struct)
+        for j in range(1, kc + 1):
+            if i != j:
+                mat[j - 1, i - 1] = np.count_nonzero(dil_i & (img == j))
+    if kc != 2:
+        row_sum = mat.sum(axis=1, keepdims=True)
+        mat = np.divide(mat, row_sum, where=row_sum != 0)
+    return mat
+
+
+# ──────────────────────── group‑level TPD ─────────────────────
+def validation_group_tpd(base_dir: str, roi: str, subjects: List[str],
+                         max_clusters: int, mpm_thres: float):
+    """
+    只在 roi 以 '_L' 结尾时才计算 TPD；否则直接跳过。
+    依次对 kc=2..max_clusters 计算左右群组 MPM 的余弦距离。
+    """
+    if not roi.endswith("_L"):
+        print(f"[TPD‑group] ROI {roi} 没有 '_L' 后缀 —— 跳过 TPD 计算。")
+        return
+
+    roi_base = roi[:-2]
+    n_sub = len(subjects)
+    mpm_dir = os.path.join(base_dir, f"MPM_{n_sub}")
+
+    group_tpd = np.full(max_clusters + 1, np.nan)
+    struct = np.ones((3, 3, 3), dtype=bool)
+
+    for kc in range(2, max_clusters + 1):
+        fn_l = f"{roi_base}_L_{kc}_MPM_thr{int(mpm_thres * 100)}_group.nii.gz"
+        fn_r = f"{roi_base}_R_{kc}_MPM_thr{int(mpm_thres * 100)}_group.nii.gz"
+        path_l = os.path.join(mpm_dir, fn_l)
+        path_r = os.path.join(mpm_dir, fn_r)
+
+        if not (os.path.exists(path_l) and os.path.exists(path_r)):
+            raise FileNotFoundError(
+                f"[TPD‑group] 缺少配对文件：{path_l if not os.path.exists(path_l) else ''} "
+                f"{path_r if not os.path.exists(path_r) else ''}"
+            )
+
+        img_l = np.nan_to_num(nib.load(path_l).get_fdata(), nan=0).astype(int)
+        img_r = np.nan_to_num(nib.load(path_r).get_fdata(), nan=0).astype(int)
+
+        con_l = _adjacency(img_l, kc, struct)
+        con_r = _adjacency(img_r, kc, struct)
+        group_tpd[kc] = cosine(con_l.T.ravel(), con_r.T.ravel())
+        print(f"[TPD‑group] {roi_base} kc={kc} tpd={group_tpd[kc]:.4f}")
+
+    # 保存
+    out_dir = os.path.join(base_dir, f"validation_{n_sub}")
+    os.makedirs(out_dir, exist_ok=True)
+    np.savez(os.path.join(out_dir, f"{roi_base}_index_group_tpd.npz"),
+             group_tpd=group_tpd)
+    with open(os.path.join(out_dir, f"{roi_base}_index_group_tpd.txt"), "w") as fp:
+        for kc in range(2, max_clusters + 1):
+            fp.write(f"cluster_num: {kc}\ngroup_tpd: {group_tpd[kc]}\n\n")
+    print(f"[TPD‑group] 结果已保存至 {out_dir}")
+
+
+# ────────── individual‑level TPD 并行任务 (顶层函数) ──────────
+def _calc_indi_tpd(idx: int, subjects: List[str], base_dir: str, roi_base: str,
+                   method: str, max_clusters: int,
+                   mask_l: np.ndarray, mask_r: np.ndarray,
+                   struct: np.ndarray) -> Tuple[int, np.ndarray]:
+    """并行：计算单个被试的 TPD 序列。"""
+    sub = subjects[idx]
+    res = np.full(max_clusters + 1, np.nan)
+
+    for kc in range(2, max_clusters + 1):
+        f_l = os.path.join(
+            base_dir, sub,
+            "data", "probtrack_old",
+            f"parcellation_{method}_MNI/{roi_base}_L",
+            f"seed_{kc}_relabel_group.nii.gz"
+        )
+        f_r = os.path.join(
+            base_dir, sub,
+            "data", "probtrack_old",
+            f"parcellation_{method}_MNI/{roi_base}_R",
+            f"seed_{kc}_relabel_group.nii.gz"
+        )
+        if not (os.path.exists(f_l) and os.path.exists(f_r)):
+            raise FileNotFoundError(f"缺少 {f_l} 或 {f_r}")
+
+        img_l = (np.nan_to_num(nib.load(f_l).get_fdata(), nan=0)
+                 .astype(int) * mask_l)
+        img_r = (np.nan_to_num(nib.load(f_r).get_fdata(), nan=0)
+                 .astype(int) * mask_r)
+
+        con_l = _adjacency(img_l, kc, struct)
+        con_r = _adjacency(img_r, kc, struct)
+        res[kc] = cosine(con_l.T.ravel(), con_r.T.ravel())
+
+    return idx, res
+
+
+# ──────────────────────── individual‑level TPD ────────────────────────
+def validation_indi_tpd(base_dir: str, roi: str, subjects: List[str], method: str,
+                        max_clusters: int, njobs: int,
+                        group_threshold: float, mpm_thres: float) -> None:
+    """
+    当 roi 以 '_L' 结尾时才执行；否则直接跳过。
+    对每个受试者并行计算 indi‑TPD。
+    """
+    if not roi.endswith("_L"):
+        print(f"[TPD‑indi] ROI {roi} 没有 '_L' 后缀 —— 跳过 TPD 计算。")
+        return
+
+    roi_base = roi[:-2]
+    n_sub = len(subjects)
+
+    # 加载左右半球 group mask
+    thr = group_threshold if group_threshold != 0 else np.finfo(float).eps
+    thr_i = int(thr * 100)
+    mask_dir = os.path.join(base_dir, "Group_xuanwu", roi_base)
+    mask_l = np.nan_to_num(
+        nib.load(os.path.join(mask_dir, f"{roi_base}_L_roimask_thr{thr_i}.nii.gz")
+                 ).get_fdata(), nan=0
+    ).astype(bool)
+    mask_r = np.nan_to_num(
+        nib.load(os.path.join(mask_dir, f"{roi_base}_R_roimask_thr{thr_i}.nii.gz")
+                 ).get_fdata(), nan=0
+    ).astype(bool)
+
+    struct = np.ones((3, 3, 3), dtype=bool)
+    indi_tpd = np.full((n_sub, max_clusters + 1), np.nan)
+
+    with ProcessPoolExecutor(max_workers=njobs) as exe:
+        futures = {
+            exe.submit(_calc_indi_tpd, i, subjects, base_dir, roi_base,
+                       method, max_clusters, mask_l, mask_r, struct): i
+            for i in range(n_sub)
+        }
+        for fut in as_completed(futures):
+            idx, row = fut.result()
+            indi_tpd[idx] = row
+            print(f"[TPD‑indi] 完成 subj {idx+1}/{n_sub}")
+
+    # 保存
+    out_dir = os.path.join(base_dir, f"validation_{n_sub}")
+    os.makedirs(out_dir, exist_ok=True)
+    np.savez(os.path.join(out_dir, f"{roi_base}_index_indi_tpd.npz"),
+             indi_tpd=indi_tpd)
+    with open(os.path.join(out_dir, f"{roi_base}_index_indi_tpd.txt"), "w") as fp:
+        for kc in range(2, max_clusters + 1):
+            vals = indi_tpd[:, kc]
+            fp.write(
+                f"cluster_num: {kc}\n"
+                f"avg_indi_tpd: {np.nanmean(vals)}\n"
+                f"std_indi_tpd: {np.nanstd(vals)}\n"
+                f"median_indi_tpd: {np.nanmedian(vals)}\n\n"
+            )
+    print(f"[TPD‑indi] 结果已保存至 {out_dir}")
+
+def validation_group_silhouette(base_dir: str, roi: str, subjects: List[str],
+                                max_clusters: int, mpm_thres: float) -> None:
+
+    hemi = None
+    if roi.endswith("_L") or roi.endswith("_R"):
+        hemi = roi[-1]
+        roi_base = roi[:-2]
+        prefix = f"{roi_base}_{hemi}_"
+    else:
+        roi_base = roi
+        prefix = f"{roi_base}_"
+
+    n_sub = len(subjects)
+    mpm_dir = os.path.join(base_dir, f"MPM_{n_sub}")
+    group_sil = np.full(max_clusters + 1, np.nan)
+
+    for kc in range(2, max_clusters + 1):
+        fn = f"{prefix}{kc}_MPM_thr{int(mpm_thres * 100)}_group.nii.gz"
+        path = os.path.join(mpm_dir, fn)
+        if not os.path.exists(path):
+            raise FileNotFoundError(path)
+
+        img = np.nan_to_num(nib.load(path).get_fdata(), nan=0).astype(int)
+        xs, ys, zs = np.where(img > 0)
+        labels = img[xs, ys, zs]
+        coords = np.column_stack((xs, ys, zs))
+
+        sil = silhouette_samples(coords, labels, metric='euclidean')
+        group_sil[kc] = np.nanmean(sil)
+        print(f"[SIL‑group] {roi} kc={kc} silhouette={group_sil[kc]:.4f}")
+
+    out_dir = os.path.join(base_dir, f"validation_{n_sub}")
+    os.makedirs(out_dir, exist_ok=True)
+    np.savez(os.path.join(out_dir, f"{roi}_index_group_silhouette.npz"),
+             group_silhouette=group_sil)
+    with open(os.path.join(out_dir, f"{roi}_index_group_silhouette.txt"), "w") as fp:
+        for kc in range(2, max_clusters + 1):
+            fp.write(f"cluster_num: {kc}\naverage_group_silhouette: {group_sil[kc]}\n\n")
+
+# ────────── individual‑silhouette 并行任务 ──────────
+def _calc_indi_sil(idx: int, subjects: List[str], base_dir: str, roi: str,
+                   method: str, max_clusters: int) -> Tuple[int, np.ndarray]:
+    """
+    subj 路径示例:
+      <base_dir>/<sub>/data/…
+    """
+    sub = subjects[idx]
+    sub_dir = os.path.join(base_dir, sub)
+
+    coord_file = os.path.join(sub_dir, "data", "seeds_txt_all",
+                              f"seed_region_{roi}.txt")
+    con_file   = os.path.join(sub_dir, "data", "probtrack_old", "con_cor",
+                              f"con_matrix_seed_{roi}.npy")
+    if not (os.path.exists(coord_file) and os.path.exists(con_file)):
+        raise FileNotFoundError(f"{coord_file} 或 {con_file} 缺失")
+
+    xyz = np.loadtxt(coord_file, dtype=int)          # 0‑based
+    conn = np.load(con_file)                         # 稠密 (N, N)
+    dist = squareform(pdist(conn / conn.sum(1, keepdims=True),
+                            metric="cosine"))
+
+    sil_row = np.full(max_clusters + 1, np.nan)
+
+    for kc in range(2, max_clusters + 1):
+        seg_path = os.path.join(
+            sub_dir, "data", "probtrack_old",
+            f"parcellation_{method}_MNI/{roi}",
+            f"seed_{kc}_relabel_group.nii.gz"
+        )
+        if not os.path.exists(seg_path):
+            warnings.warn(f"{seg_path} 缺失，跳过 subj={sub} kc={kc}")
+            continue
+
+        lab_img = np.nan_to_num(nib.load(seg_path).get_fdata(),
+                                nan=0).astype(int)
+        labels = lab_img[xyz[:, 0], xyz[:, 1], xyz[:, 2]]
+        if np.unique(labels).size < 2:
+            sil_row[kc] = np.nan      # 与 MATLAB 行为保持一致
+            continue
+        sil_vals = silhouette_samples(dist, labels, metric="precomputed")
+        sil_row[kc] = np.nanmean(sil_vals)
+        
+
+    return idx, sil_row
+
+# ────────── individual‑silhouette 主调度 ──────────
+def validation_indi_silhouette(base_dir: str, roi: str, subjects: List[str],
+                               method: str, max_clusters: int, njobs: int):
+    """
+    读取新的路径结构并并行计算 silhouette。
+    """
+    n_sub = len(subjects)
+    indi_sil = np.full((n_sub, max_clusters + 1), np.nan)
+
+    with ProcessPoolExecutor(max_workers=njobs) as exe:
+        futs = {exe.submit(_calc_indi_sil, i, subjects, base_dir, roi,
+                           method, max_clusters): i
+                for i in range(n_sub)}
+        for fut in as_completed(futs):
+            idx, row = fut.result()
+            indi_sil[idx] = row
+            print(f"[SIL‑indi] subj {idx+1}/{n_sub} done")
+
+    out_dir = os.path.join(base_dir, f"validation_{n_sub}")
+    os.makedirs(out_dir, exist_ok=True)
+    np.savez(os.path.join(out_dir, f"{roi}_index_indi_silhouette.npz"),
+             indi_silhouette=indi_sil)
+    with open(os.path.join(out_dir, f"{roi}_index_indi_silhouette.txt"), "w") as fp:
+        for kc in range(2, max_clusters + 1):
+            vals = indi_sil[:, kc]
+            fp.write(
+                f"cluster_num: {kc}\n"
+                f"avg_indi_silhouette: {np.nanmean(vals)}\n"
+                f"std_indi_silhouette: {np.nanstd(vals)}\n"
+                f"median_indi_silhouette: {np.nanmedian(vals)}\n\n"
+            )
+    print(f"[SIL‑indi] 结果保存于 {out_dir}")
+
+# ────────── continuity 基函数 ──────────
+def _continuity_index(img: np.ndarray, kc: int) -> float:
+    """
+    img: 3D int array, 取值 0..kc
+    返回: 平均 continuity = 每个簇 (最大连通分量 / 全簇体素) 再对 kc 取均值
+    """
+    struct = np.zeros((3, 3, 3), dtype=bool)        # 6-neigh
+    struct[1, 1, [0, 2]] = True
+    struct[1, [0, 2], 1] = True
+    struct[[0, 2], 1, 1] = True
+
+    cont_sum = 0
+    for i in range(1, kc + 1):
+        sub = (img == i)
+        if not sub.any():
+            continue
+        labeled, n = bwlabel(sub, structure=struct)
+        if n == 0:
+            continue
+        sizes = np.bincount(labeled.ravel())[1:]     # 忽略 0
+        cont_sum += sizes.max() / sizes.sum()
+    return cont_sum / kc
+
+
+# ────────── group‑level continuity ──────────
+def validation_group_cont(base_dir: str, roi: str, subjects: List[str],
+                          max_clusters: int, mpm_thres: float) -> None:
+    n_sub = len(subjects)
+    mpm_dir = os.path.join(base_dir, f"MPM_{n_sub}")
+
+    # ROI 文件前缀
+    if roi.endswith(("_L", "_R")):
+        prefix = f"{roi}_"
+    else:
+        prefix = f"{roi}_"
+
+    group_cont = np.full(max_clusters + 1, np.nan)
+    for kc in range(2, max_clusters + 1):
+        fn = f"{prefix}{kc}_MPM_thr{int(mpm_thres*100)}_group.nii.gz"
+        path = os.path.join(mpm_dir, fn)
+        if not os.path.exists(path):
+            raise FileNotFoundError(path)
+
+        img = np.nan_to_num(nib.load(path).get_fdata(), nan=0).astype(int)
+        group_cont[kc] = _continuity_index(img, kc)
+        print(f"[CONT‑group] {roi} kc={kc} cont={group_cont[kc]:.4f}")
+
+    out_dir = os.path.join(base_dir, f"validation_{n_sub}")
+    os.makedirs(out_dir, exist_ok=True)
+    np.savez(os.path.join(out_dir, f"{roi}_index_group_continuity.npz"),
+             group_continuity=group_cont)
+    with open(os.path.join(out_dir, f"{roi}_index_group_continuity.txt"), "w") as fp:
+        for kc in range(2, max_clusters + 1):
+            fp.write(
+                f"cluster_num: {kc}\ngroup_continuity: {group_cont[kc]}\n\n"
+            )
+    print(f"[CONT‑group] 结果保存于 {out_dir}")
+
+
+# ────────── individual‑level 并行任务 ──────────
+def _calc_indi_cont(idx: int, subjects: List[str], base_dir: str, roi: str,
+                    method: str, max_clusters: int,
+                    mask: np.ndarray) -> Tuple[int, np.ndarray]:
+    sub = subjects[idx]
+    sub_dir = os.path.join(base_dir, sub)
+    res = np.full(max_clusters + 1, np.nan)
+
+    for kc in range(2, max_clusters + 1):
+        seg_path = os.path.join(
+            sub_dir, "data", "probtrack_old",
+            f"parcellation_{method}_MNI/{roi}",
+            f"seed_{kc}_relabel_group.nii.gz"
+        )
+        if not os.path.exists(seg_path):
+            warnings.warn(f"{seg_path} 缺失，跳 subj={sub} kc={kc}")
+            continue
+        img = (np.nan_to_num(nib.load(seg_path).get_fdata(), nan=0)
+               .astype(int) * mask)
+        res[kc] = _continuity_index(img, kc)
+    return idx, res
+
+
+# ────────── individual‑level continuity ──────────
+def validation_indi_cont(base_dir: str, roi: str, subjects: List[str], method: str,
+                         max_clusters: int, njobs: int,
+                         group_threshold: float) -> None:
+    n_sub = len(subjects)
+
+    # 加载 group mask (若不存在，使用全 1)
+    thr = group_threshold if group_threshold != 0 else np.finfo(float).eps
+    thr_i = int(thr * 100)
+    mask_dir = os.path.join(base_dir, "Group_xuanwu", roi)
+    mask_path = os.path.join(mask_dir, f"{roi}_roimask_thr{thr_i}.nii.gz")
+    if os.path.exists(mask_path):
+        mask = np.nan_to_num(nib.load(mask_path).get_fdata(), nan=0).astype(bool)
+    else:
+        warnings.warn(f"mask {mask_path} 缺失，使用全 1 掩码")
+        # 从任一分割文件取体积形状
+        sample_img = nib.load(
+            os.path.join(base_dir, subjects[0],
+                         "data", "probtrack_old",
+                         f"parcellation_{method}_MNI/{roi}",
+                         f"seed_2_relabel_group.nii.gz")
+        )
+        mask = np.ones(sample_img.shape, dtype=bool)
+
+    indi_cont = np.full((n_sub, max_clusters + 1), np.nan)
+    with ProcessPoolExecutor(max_workers=njobs) as exe:
+        futs = {exe.submit(_calc_indi_cont, i, subjects, base_dir, roi, method,
+                           max_clusters, mask): i
+                for i in range(n_sub)}
+        for fut in as_completed(futs):
+            idx, row = fut.result()
+            indi_cont[idx] = row
+            print(f"[CONT‑indi] subj {idx+1}/{n_sub} done")
+
+    out_dir = os.path.join(base_dir, f"validation_{n_sub}")
+    os.makedirs(out_dir, exist_ok=True)
+    np.savez(os.path.join(out_dir, f"{roi}_index_indi_continuity.npz"),
+             indi_continuity=indi_cont)
+    with open(os.path.join(out_dir, f"{roi}_index_indi_continuity.txt"), "w") as fp:
+        for kc in range(2, max_clusters + 1):
+            vals = indi_cont[:, kc]
+            fp.write(
+                f"cluster_num: {kc}\n"
+                f"avg_indi_continuity: {np.nanmean(vals)}\n"
+                f"std_indi_continuity: {np.nanstd(vals)}\n"
+                f"median_indi_continuity: {np.nanmedian(vals)}\n\n"
+            )
+    print(f"[CONT‑indi] 结果保存于 {out_dir}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -286,6 +831,17 @@ if __name__ == "__main__":
     parser.add_argument("--njobs", type=int, default=3)
     parser.add_argument("--group_threshold", type=float, default=0.25)
     parser.add_argument("--mpm_thres", type=float, default=0.25)
+    parser.add_argument("--no_split_half", dest="split_half", action="store_false", default=True)
+    parser.add_argument("--no_pairwise",  dest="pairwise",  action="store_false", default=True)
+    parser.add_argument("--no_leave_one_out", dest="leave_one_out", action="store_false", default=True)
+    parser.add_argument("--no_group_hi_vi", dest="group_hi_vi", action="store_false", default=True)
+    parser.add_argument("--no_indi_hi_vi",  dest="indi_hi_vi",  action="store_false", default=True)
+    parser.add_argument("--no_group_tpd", dest="group_tpd", action="store_false", default=True)
+    parser.add_argument("--no_indi_tpd", dest="indi_tpd", action="store_false", default=True)
+    parser.add_argument("--no_group_silhouette", dest="group_sil", action="store_false", default=True)
+    parser.add_argument("--no_indi_silhouette", dest="indi_sil", action="store_false", default=True)
+    parser.add_argument("--no_group_continuity", dest="group_cont", action="store_false",default=True)
+    parser.add_argument("--no_indi_continuity",  dest="indi_cont",  action="store_false",default=True)
     args = parser.parse_args()
 
     # load subjects
@@ -294,39 +850,115 @@ if __name__ == "__main__":
             subjects = [s.strip() for s in f if s.strip()]
     else:
         subjects = args.subject_data.split(',')
-
-    # split-half validation
-    validation_split_half(
-        base_dir=args.base_dir,
-        roi=args.roi_name,
-        subjects=subjects,
-        method=args.method,
-        max_clusters=args.max_clusters,
-        n_iter=args.n_iter,
-        njobs=args.njobs,
-        group_threshold=args.group_threshold,
-        mpm_thres=args.mpm_thres
-    )
-
-    # pairwise validation with parallel kc
-    validation_pairwise(
-        base_dir=args.base_dir,
-        roi=args.roi_name,
-        subjects=subjects,
-        method=args.method,
-        max_clusters=args.max_clusters,
-        njobs=args.njobs,
-        group_threshold=args.group_threshold
-    )
-
-    # leave-one-out validation
-    validation_leave_one_out(
-        base_dir=args.base_dir,
-        roi=args.roi_name,
-        subjects=subjects,
-        method=args.method,
-        max_clusters=args.max_clusters,
-        njobs=args.njobs,
-        group_threshold=args.group_threshold,
-        mpm_thres=args.mpm_thres
-    )
+    '''
+    if args.split_half:
+        validation_split_half(
+            base_dir=args.base_dir,
+            roi=args.roi_name,
+            subjects=subjects,
+            method=args.method,
+            max_clusters=args.max_clusters,
+            n_iter=args.n_iter,
+            njobs=args.njobs,
+            group_threshold=args.group_threshold,
+            mpm_thres=args.mpm_thres
+        )
+    if args.pairwise:
+        validation_pairwise(
+            base_dir=args.base_dir,
+            roi=args.roi_name,
+            subjects=subjects,
+            method=args.method,
+            max_clusters=args.max_clusters,
+            njobs=args.njobs,
+            group_threshold=args.group_threshold
+        )
+    if args.leave_one_out:
+        validation_leave_one_out(
+            base_dir=args.base_dir,
+            roi=args.roi_name,
+            subjects=subjects,
+            method=args.method,
+            max_clusters=args.max_clusters,
+            njobs=args.njobs,
+            group_threshold=args.group_threshold,
+            mpm_thres=args.mpm_thres
+        )
+    '''
+    if args.group_hi_vi:
+        validation_group_hi_vi(
+            base_dir=args.base_dir,
+            roi=args.roi_name,
+            subjects=subjects,
+            method=args.method,
+            max_clusters=args.max_clusters,
+            group_threshold=args.group_threshold,
+            mpm_thres=args.mpm_thres,
+            njobs=args.njobs
+        )
+    if args.indi_hi_vi:
+        validation_indi_hi_vi(
+            base_dir=args.base_dir,
+            roi=args.roi_name,
+            subjects=subjects,
+            method=args.method,
+            max_clusters=args.max_clusters,
+            group_threshold=args.group_threshold,
+            mpm_thres=args.mpm_thres,
+            njobs=args.njobs
+        )
+    if args.group_tpd:
+        validation_group_tpd(
+            base_dir=args.base_dir,
+            roi=args.roi_name,
+            subjects=subjects,
+            max_clusters=args.max_clusters,
+            mpm_thres=args.mpm_thres
+        )
+    if args.indi_tpd:
+        validation_indi_tpd(
+            base_dir=args.base_dir,
+            roi=args.roi_name,
+            subjects=subjects,
+            method=args.method,
+            max_clusters=args.max_clusters,
+            njobs=args.njobs,
+            group_threshold=args.group_threshold,
+            mpm_thres=args.mpm_thres
+        )
+    if args.group_sil:
+        validation_group_silhouette(
+            base_dir=args.base_dir,
+            roi=args.roi_name,
+            subjects=subjects,
+            max_clusters=args.max_clusters,
+            mpm_thres=args.mpm_thres
+        )
+    if args.indi_sil:
+        validation_indi_silhouette(
+            base_dir=args.base_dir,
+            roi=args.roi_name,
+            subjects=subjects,
+            method=args.method,
+            max_clusters=args.max_clusters,
+            njobs=args.njobs
+        )
+    if args.group_cont:
+        validation_group_cont(
+            base_dir=args.base_dir,
+            roi=args.roi_name,
+            subjects=subjects,
+            max_clusters=args.max_clusters,
+            mpm_thres=args.mpm_thres
+        )
+    
+    if args.indi_cont:
+        validation_indi_cont(
+            base_dir=args.base_dir,
+            roi=args.roi_name,
+            subjects=subjects,
+            method=args.method,
+            max_clusters=args.max_clusters,
+            njobs=args.njobs,
+            group_threshold=args.group_threshold
+        )
