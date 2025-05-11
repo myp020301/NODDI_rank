@@ -76,7 +76,7 @@ def process_cluster(base_dir, roi, subjects, cl_num, method, mpm_thres, img_shap
             mean1 = connect6mean(prob_cluster[..., a], x, y, z)
             mean2 = connect6mean(prob_cluster[..., b], x, y, z)
 
-            if mean1 > mean2:
+            if mean1 >= mean2:
                 mpm[x, y, z] = a + 1
             else:
                 mpm[x, y, z] = b + 1
@@ -89,7 +89,7 @@ def process_cluster(base_dir, roi, subjects, cl_num, method, mpm_thres, img_shap
     )
 
 def calc_mpm_group_xmm(base_dir, roi, subject_paths, max_cl_num, method, mpm_thres, njobs):
-    # -------- 1. 读取被试列表 --------
+    
     if os.path.isfile(subject_paths):
         with open(subject_paths) as f:
             subjects = [s.strip() for s in f if s.strip()]
@@ -97,11 +97,8 @@ def calc_mpm_group_xmm(base_dir, roi, subject_paths, max_cl_num, method, mpm_thr
         subjects = subject_paths.split(',')
     n_sub = len(subjects)
 
-    # -------- 2. 输出目录 --------
     prob_dir = os.path.join(base_dir, f"MPM_{n_sub}")
     os.makedirs(prob_dir, exist_ok=True)
-
-    # -------- 3. 参考图像 --------
     ref_path = os.path.join(
         base_dir, subjects[0],
         "data", "probtrack_old",
@@ -113,10 +110,6 @@ def calc_mpm_group_xmm(base_dir, roi, subject_paths, max_cl_num, method, mpm_thr
     img_shape = ref_data.shape
     affine, header = ref_nii.affine, ref_nii.header
 
-
-    # =======================================================
-    #                主  循  环   (CL_NUM) 并行化
-    # =======================================================
     with ProcessPoolExecutor(max_workers=njobs) as executor:
         futures = []
         for cl_num in range(2, max_cl_num + 1):
@@ -138,7 +131,7 @@ if __name__ == "__main__":
     parser.add_argument("--base_dir",     required=True)
     parser.add_argument("--roi_name",     required=True)
     parser.add_argument("--subject_data", required=True)
-    parser.add_argument("--max_clusters", type=int, default=5)
+    parser.add_argument("--max_clusters", type=int, default=6)
     parser.add_argument("--method",       default="sc")
     parser.add_argument("--mpm_thres",    type=float, default=0.25)
     parser.add_argument("--njobs",        type=int,   default=3)

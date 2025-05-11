@@ -42,7 +42,11 @@ def process_cluster(base_dir, roi, cl_num, mpm_thres, subjects, prob_dir):
             jsh = np.where(label == wjs)[0]
             b = jsh[1] if len(jsh) >= 2 else jsh[0]
             img[i, j, k] = b
-
+        # 打印“处理后”标签分布
+    unique1, counts1 = np.unique(img.astype(int), return_counts=True)
+    print(f"[{roi} CL={cl_num}] after voting: ", 
+          ' '.join(f"({v}:{c})" for v,c in zip(unique1,counts1))
+    )
     # 保存处理后的图像
     out_img = nib.Nifti1Image(img, img_nii.affine, img_nii.header)
     output_filename = f"{roi}_{cl_num}_MPM_thr{int(mpm_thres * 100)}_group_smoothed.nii.gz"
@@ -80,7 +84,7 @@ if __name__ == "__main__":
     parser.add_argument("--base_dir",     required=True)
     parser.add_argument("--roi_name",     required=True)
     parser.add_argument("--subject_data", required=True)
-    parser.add_argument("--max_clusters", type=int, default=5)
+    parser.add_argument("--max_clusters", type=int, default=6)
     parser.add_argument("--mpm_thres",    type=float, default=0.25)
     parser.add_argument("--njobs",        type=int, default=3)
     args = parser.parse_args()

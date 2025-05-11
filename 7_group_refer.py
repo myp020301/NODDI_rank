@@ -75,9 +75,6 @@ def group_refer(base_dir, roi, subject_paths, max_clusters, method, group_thresh
         return
     nii_template = nib.load(template_file)
     template_img = nii_template.get_fdata()
-    print("--- Debug Info ---")
-    print(f"Size of template_img: {template_img.shape}")
-    print(f"First few values of template_img: {template_img.ravel()[:10]}")
 
     sum_img = np.zeros(template_img.shape, dtype=np.float64)
 
@@ -103,8 +100,6 @@ def group_refer(base_dir, roi, subject_paths, max_clusters, method, group_thresh
     group_mask[group_mask < thresh_val] = 0
     group_mask[group_mask >= thresh_val] = 1
 
-    print(f"Size of group_mask: {group_mask.shape}")
-    print(f"First few values of group_mask: {group_mask.ravel()[:10]}")
 
     group_roi_dir = os.path.join(base_dir, "Group_xuanwu", roi)
     os.makedirs(group_roi_dir, exist_ok=True)
@@ -145,10 +140,6 @@ def group_refer(base_dir, roi, subject_paths, max_clusters, method, group_thresh
 
         np.fill_diagonal(co_occur, 0)
 
-        # 打印co_occur信息
-        print(f"Size of co_occur: {co_occur.shape}")
-        print(f"First few values of co_occur: {co_occur.ravel()[:10]}")
-
         # 聚类
         try:
             labels = sc3(clus, co_occur)
@@ -162,10 +153,6 @@ def group_refer(base_dir, roi, subject_paths, max_clusters, method, group_thresh
         else:
             cluster_flat[roi_idx] = labels
         cluster_img = cluster_flat.reshape(template_img.shape)
-
-        # 打印cluster_img信息
-        print(f"Size of cluster_img: {cluster_img.shape}")
-        print(f"First few values of cluster_img: {cluster_img.ravel()[:10]}")
 
         # 保存聚类结果
         output_file = os.path.join(group_roi_dir, f"{roi}_{clus}_{int(real_thresh*100)}_group.nii.gz")

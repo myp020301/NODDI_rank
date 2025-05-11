@@ -88,6 +88,7 @@ def calc_matrix_for_seed(
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_path", required=True)
+    parser.add_argument("--roi_dir",default="/data2/mayupeng/BNU/ROI")
     parser.add_argument("--roi_name",required=True)
     parser.add_argument("--threshold", type=float, default=10.0)
     
