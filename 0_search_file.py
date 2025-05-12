@@ -43,7 +43,7 @@ def prepare_subject_data_BNU(dataset_directory: str, subject_id: str, use_t1: bo
     run_command(cmd)
     return dwi_dir, True
 
-def prepare_subject_data_xuanwu(dataset_directory: str,
+def prepare_subject_data(dataset_directory: str,
                                 subject_id: str,
                                 use_t1: bool = False):
 
@@ -125,7 +125,7 @@ def run_group_analysis(subject_paths,
                        roi_name,
                        njobs):
     subjects = ",".join(subject_paths)
-    
+    '''
     # Step 7: Group refer（串行）
     print(f"[INFO] Step 7: Group refer for ROI {roi_name}")
     run_command(
@@ -134,13 +134,13 @@ def run_group_analysis(subject_paths,
         f"--subject_data {subjects} "
         f"--roi_name {roi_name}"
     )
-    
+    '''
     # Steps 8–11: 串行执行 relabel, calc_mpm, postprocess, validation
     print(f"[INFO] Steps 8–11: Serial for ROI {roi_name}")
     for script in [
-        cluster_relabel_script,
-        calc_mpm_script,
-        postprocess_mpm_script,
+       # cluster_relabel_script,
+       # calc_mpm_script,
+       # postprocess_mpm_script,
         validation_script  
     ]:
         cmd = (
@@ -165,7 +165,7 @@ def process_single_roi(base_directory, use_t1, roi_name, roi_dir, subject_paths,
     
     with ProcessPoolExecutor(max_workers=njobs) as ex:
         # 步骤 2: Registration
-        
+        '''
         print(f"[INFO] Step 2: Registration for ROI {roi_name}")
         futures = [ex.submit(
             run_roi_step, p, registration_script, roi_dir, roi_name, use_t1) for p in subject_paths]
@@ -200,7 +200,7 @@ def process_single_roi(base_directory, use_t1, roi_name, roi_dir, subject_paths,
         for f in as_completed(futures):
             try: f.result()
             except Exception as e: print(f"[ERROR] ROI-to-MNI ROI {e}")
-            
+     '''       
     # Steps 7,8 & 9: Group analysis, relabel, and MPM
     print(f"[INFO] Step 7-10: Group analysis, relabel & MPM for ROI {roi_name}")
     run_group_analysis(subject_paths,
@@ -247,7 +247,7 @@ if __name__ == "__main__":
             print(f"[ERROR] 找不到目录: {ds_dir}")
             continue
         for subj in os.listdir(ds_dir):
-            data_path, ok = prepare_subject_data_xuanwu(ds_dir, subj, args.use_t1)
+            data_path, ok = prepare_subject_data(ds_dir, subj, args.use_t1)
             if not ok:
                 continue
             # 记录 subject 数据路径
@@ -255,7 +255,7 @@ if __name__ == "__main__":
                 f_out.write(f"{data_path}\n")
             all_subject_paths.append(data_path)
     print(f"[INFO] Running bedpostx for subject {subj}")
-    run_bedpostx(all_subject_paths, args.bedpostx_script, args.njobs)
+    #run_bedpostx(all_subject_paths, args.bedpostx_script, args.njobs)
     
     # 读取 ROI 列表
     with open(args.roi_list_file) as f:

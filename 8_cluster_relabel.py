@@ -73,7 +73,7 @@ def cluster_relabel(base_dir, region, subject_paths, max_clusters, method, group
     if isinstance(subject_paths, str):
         subject_paths = subject_paths.split(",")
 
-    group_dir  = os.path.join(base_dir, "Group_xuanwu", region)
+    group_dir  = os.path.join(base_dir, "Group", region)
     thresh_int = int(group_threshold * 100)
 
     # 收集所有要处理的任务

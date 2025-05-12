@@ -8,8 +8,8 @@ from validation_metrics import v_dice, v_nmi, v_cramerv
 from scipy.ndimage import binary_dilation
 from scipy.spatial.distance import cosine
 from scipy.spatial.distance import pdist, squareform
-from sklearn.metrics import silhouette_samples
-from typing import List, Tuple, Dict, Any 
+from sklearn.metrics import pairwise_distances, silhouette_samples
+from typing import List, Tuple
 from scipy.ndimage import label as bwlabel
 
 def connect6mean(img, i, j, k):
@@ -43,11 +43,9 @@ def cluster_mpm_validation(base_dir, roi, subjects, method, kc, mpm_thres):
         )
         data = np.nan_to_num(nib.load(sub_path).get_fdata(), nan=0).astype(int)
 
-        # Accumulate binary mask
         mask_vol = (data > 0).astype(float)
         sumimg += mask_vol
 
-        # Accumulate raw counts for each cluster
         for ki in range(1, kc+1):
             prob_cluster[..., ki-1] += (data == ki).astype(float)
 
@@ -82,7 +80,6 @@ def cluster_mpm_validation(base_dir, roi, subjects, method, kc, mpm_thres):
 
     return mpm_cluster
 
-
 def _one_split_half(idx, subjects, half, base_dir, roi, method,
                     max_clusters, mpm_thres, mask):
     np.random.seed()
@@ -103,8 +100,6 @@ def _one_split_half(idx, subjects, half, base_dir, roi, method,
         tc[kc] = v_cramerv(m1, m2)
     return idx, td, tn, tv, tc
 
-
-
 def validation_split_half(base_dir, roi, subjects, method,
                            max_clusters, n_iter, njobs,
                            group_threshold, mpm_thres):
@@ -112,7 +107,7 @@ def validation_split_half(base_dir, roi, subjects, method,
     half = sub_num // 2
     # load mask
     thr = np.finfo(float).eps if group_threshold == 0 else group_threshold
-    mask_file = os.path.join(base_dir, "Group_xuanwu", roi,
+    mask_file = os.path.join(base_dir, "Group", roi,
                              f"{roi}_roimask_thr{int(thr*100)}.nii.gz")
     mask = np.nan_to_num(nib.load(mask_file).get_fdata(), nan=0) > 0
     out_dir = os.path.join(base_dir, f"validation_{sub_num}")
@@ -173,7 +168,7 @@ def validation_pairwise(base_dir, roi, subjects, method,
     sub_num = len(subjects)
     thr = np.finfo(float).eps if group_threshold == 0 else group_threshold
     mask = np.nan_to_num(nib.load(os.path.join(
-        base_dir, "Group_xuanwu", roi,
+        base_dir, "Group", roi,
         f"{roi}_roimask_thr{int(thr*100)}.nii.gz"
     )).get_fdata(), nan=0) > 0
     out_dir = os.path.join(base_dir, f"validation_{sub_num}")
@@ -238,7 +233,7 @@ def validation_leave_one_out(base_dir, roi, subjects, method,
     # load mask
     thr = np.finfo(float).eps if group_threshold == 0 else group_threshold
     mask = np.nan_to_num(nib.load(os.path.join(
-        base_dir, "Group_xuanwu", roi,
+        base_dir, "Group", roi,
         f"{roi}_roimask_thr{int(thr*100)}.nii.gz"
     )).get_fdata(), nan=0) > 0
     out_dir = os.path.join(base_dir, f"validation_{sub_num}")
@@ -300,7 +295,6 @@ def validation_group_hi_vi(base_dir, roi, subjects, method,
         m1 = np.nan_to_num(nib.load(f1).get_fdata(), nan=0).astype(int)
         m2 = np.nan_to_num(nib.load(f2).get_fdata(), nan=0).astype(int)
 
-        # compute HI: for each cluster in m2, find max overlap fraction in m1
         xi = []
         for i in range(1, kc+1):
             mask_i = (m2 == i)
@@ -332,7 +326,7 @@ def _one_indi_hi_vi(idx, subjects, base_dir, roi, method,
     sub = subjects[idx]
     # 加载 Mask
     thr = group_threshold if group_threshold != 0 else np.finfo(float).eps
-    mask_dir = os.path.join(base_dir, "Group_xuanwu", roi)
+    mask_dir = os.path.join(base_dir, "Group", roi)
     mask = np.nan_to_num(
         nib.load(os.path.join(mask_dir, f"{roi}_roimask_thr{int(thr*100)}.nii.gz")).get_fdata(),
         nan=0
@@ -531,7 +525,7 @@ def validation_indi_tpd(base_dir: str, roi: str, subjects: List[str], method: st
     # 加载左右半球 group mask
     thr = group_threshold if group_threshold != 0 else np.finfo(float).eps
     thr_i = int(thr * 100)
-    mask_dir = os.path.join(base_dir, "Group_xuanwu", roi_base)
+    mask_dir = os.path.join(base_dir, "Group", roi_base)
     mask_l = np.nan_to_num(
         nib.load(os.path.join(mask_dir, f"{roi_base}_L_roimask_thr{thr_i}.nii.gz")
                  ).get_fdata(), nan=0
@@ -571,37 +565,48 @@ def validation_indi_tpd(base_dir: str, roi: str, subjects: List[str], method: st
             )
     print(f"[TPD‑indi] 结果已保存至 {out_dir}")
 
-def validation_group_silhouette(base_dir: str, roi: str, subjects: List[str],
-                                max_clusters: int, mpm_thres: float) -> None:
+def validation_group_silhouette(
+        base_dir: str, roi: str, subjects: List[str],
+        max_clusters: int, mpm_thres: float) -> None:
 
-    hemi = None
-    if roi.endswith("_L") or roi.endswith("_R"):
-        hemi = roi[-1]
-        roi_base = roi[:-2]
-        prefix = f"{roi_base}_{hemi}_"
+    if roi.endswith(("_L", "_R")):
+        hemi      = roi[-1]
+        roi_base  = roi[:-2]
+        prefix    = f"{roi_base}_{hemi}_"
     else:
-        roi_base = roi
-        prefix = f"{roi_base}_"
+        roi_base  = roi
+        prefix    = f"{roi_base}_"
 
-    n_sub = len(subjects)
+    n_sub   = len(subjects)
     mpm_dir = os.path.join(base_dir, f"MPM_{n_sub}")
     group_sil = np.full(max_clusters + 1, np.nan)
 
     for kc in range(2, max_clusters + 1):
-        fn = f"{prefix}{kc}_MPM_thr{int(mpm_thres * 100)}_group.nii.gz"
+        fn   = f"{prefix}{kc}_MPM_thr{int(mpm_thres*100)}_group.nii.gz"
         path = os.path.join(mpm_dir, fn)
         if not os.path.exists(path):
             raise FileNotFoundError(path)
 
-        img = np.nan_to_num(nib.load(path).get_fdata(), nan=0).astype(int)
+        img    = np.nan_to_num(nib.load(path).get_fdata(), nan=0).astype(int)
         xs, ys, zs = np.where(img > 0)
         labels = img[xs, ys, zs]
-        coords = np.column_stack((xs, ys, zs))
 
-        sil = silhouette_samples(coords, labels, metric='euclidean')
-        group_sil[kc] = np.nanmean(sil)
-        print(f"[SIL‑group] {roi} kc={kc} silhouette={group_sil[kc]:.4f}")
+        # ---------- 打印每个簇的体素数 ----------
+        uniq, cnt = np.unique(labels, return_counts=True)
+        print(f"[SIL-group] {roi} kc={kc} label_counts: {dict(zip(uniq, cnt))}")
+        # --------------------------------------
 
+        # --- 与 MATLAB 一致：4 维特征 + sqEuclidean ---
+        X_feat = np.column_stack((xs, ys, zs, labels.astype(float)))
+        # 先算欧氏距离再平方 → 得到 sqEuclidean
+        D = pairwise_distances(X_feat, metric="euclidean") ** 2
+        sil_vals = silhouette_samples(D, labels, metric="precomputed")
+        # ----------------------------------------------
+
+        group_sil[kc] = np.nanmean(sil_vals)
+        print(f"[SIL-group] {roi} kc={kc} silhouette={group_sil[kc]:.4f}")
+
+    # ───── 保存结果 ─────
     out_dir = os.path.join(base_dir, f"validation_{n_sub}")
     os.makedirs(out_dir, exist_ok=True)
     np.savez(os.path.join(out_dir, f"{roi}_index_group_silhouette.npz"),
@@ -610,16 +615,13 @@ def validation_group_silhouette(base_dir: str, roi: str, subjects: List[str],
         for kc in range(2, max_clusters + 1):
             fp.write(f"cluster_num: {kc}\naverage_group_silhouette: {group_sil[kc]}\n\n")
 
-# ────────── individual‑silhouette 并行任务 ──────────
+# ────────── individual-silhouette 并行任务 ──────────
 def _calc_indi_sil(idx: int, subjects: List[str], base_dir: str, roi: str,
                    method: str, max_clusters: int) -> Tuple[int, np.ndarray]:
-    """
-    subj 路径示例:
-      <base_dir>/<sub>/data/…
-    """
-    sub = subjects[idx]
+    sub     = subjects[idx]
     sub_dir = os.path.join(base_dir, sub)
 
+    # ① 加载坐标 & 连接矩阵 --------------------------------------------------
     coord_file = os.path.join(sub_dir, "data", "seeds_txt_all",
                               f"seed_region_{roi}.txt")
     con_file   = os.path.join(sub_dir, "data", "probtrack_old", "con_cor",
@@ -627,34 +629,44 @@ def _calc_indi_sil(idx: int, subjects: List[str], base_dir: str, roi: str,
     if not (os.path.exists(coord_file) and os.path.exists(con_file)):
         raise FileNotFoundError(f"{coord_file} 或 {con_file} 缺失")
 
-    xyz = np.loadtxt(coord_file, dtype=int)          # 0‑based
-    conn = np.load(con_file)                         # 稠密 (N, N)
-    dist = squareform(pdist(conn / conn.sum(1, keepdims=True),
-                            metric="cosine"))
+    xyz   = np.loadtxt(coord_file, dtype=int)          # (N,3)
+    conn  = np.load(con_file).astype(np.float64)       # (N,N)
+    conn /= conn.sum(1, keepdims=True) + 1e-12         # 归一化防 0
+    dist_mat = squareform(pdist(conn, metric="cosine"))  # (N,N)
 
+    # ② 逐 kc 计算 silhouette -------------------------------------------------
     sil_row = np.full(max_clusters + 1, np.nan)
 
     for kc in range(2, max_clusters + 1):
         seg_path = os.path.join(
             sub_dir, "data", "probtrack_old",
-            f"parcellation_{method}_MNI/{roi}",
-            f"seed_{kc}_relabel_group.nii.gz"
+            f"parcellation_{method}",
+            f"seed_{roi}_{kc}.nii.gz"
         )
         if not os.path.exists(seg_path):
-            warnings.warn(f"{seg_path} 缺失，跳过 subj={sub} kc={kc}")
+            warnings.warn(f"{seg_path} 缺失，跳 subj={sub} kc={kc}")
+            continue
+        lab_img = np.nan_to_num(nib.load(seg_path).get_fdata(), nan=0).astype(int)
+        u, c = np.unique(lab_img, return_counts=True)
+        label_counts_full = dict(zip(u.tolist(), c.tolist()))      
+        print(f"[SIL-indi] seg_path={seg_path} seg_label_counts={label_counts_full}")    
+              
+
+        labels  = lab_img[xyz[:, 0], xyz[:, 1], xyz[:, 2]]
+        
+        unique_labels, counts = np.unique(labels, return_counts=True)
+        label_counts = dict(zip(unique_labels.tolist(), counts.tolist()))
+        print(f"[SIL-indi] subj={sub} kc={kc}  label_counts={label_counts}")
+
+        # —— 关键改动：簇数不足时直接给 NaN，不抛错也不强行置 0
+        if np.unique(labels).size < 2:
             continue
 
-        lab_img = np.nan_to_num(nib.load(seg_path).get_fdata(),
-                                nan=0).astype(int)
-        labels = lab_img[xyz[:, 0], xyz[:, 1], xyz[:, 2]]
-        if np.unique(labels).size < 2:
-            sil_row[kc] = np.nan      # 与 MATLAB 行为保持一致
-            continue
-        sil_vals = silhouette_samples(dist, labels, metric="precomputed")
-        sil_row[kc] = np.nanmean(sil_vals)
-        
+        sil_vals     = silhouette_samples(dist_mat, labels, metric="precomputed")
+        sil_row[kc]  = np.nanmean(sil_vals)
 
     return idx, sil_row
+
 
 # ────────── individual‑silhouette 主调度 ──────────
 def validation_indi_silhouette(base_dir: str, roi: str, subjects: List[str],
@@ -780,7 +792,7 @@ def validation_indi_cont(base_dir: str, roi: str, subjects: List[str], method: s
     # 加载 group mask (若不存在，使用全 1)
     thr = group_threshold if group_threshold != 0 else np.finfo(float).eps
     thr_i = int(thr * 100)
-    mask_dir = os.path.join(base_dir, "Group_xuanwu", roi)
+    mask_dir = os.path.join(base_dir, "Group", roi)
     mask_path = os.path.join(mask_dir, f"{roi}_roimask_thr{thr_i}.nii.gz")
     if os.path.exists(mask_path):
         mask = np.nan_to_num(nib.load(mask_path).get_fdata(), nan=0).astype(bool)
@@ -850,7 +862,6 @@ if __name__ == "__main__":
             subjects = [s.strip() for s in f if s.strip()]
     else:
         subjects = args.subject_data.split(',')
-    '''
     if args.split_half:
         validation_split_half(
             base_dir=args.base_dir,
@@ -884,7 +895,7 @@ if __name__ == "__main__":
             group_threshold=args.group_threshold,
             mpm_thres=args.mpm_thres
         )
-    '''
+    
     if args.group_hi_vi:
         validation_group_hi_vi(
             base_dir=args.base_dir,
@@ -926,6 +937,7 @@ if __name__ == "__main__":
             group_threshold=args.group_threshold,
             mpm_thres=args.mpm_thres
         )
+     
     if args.group_sil:
         validation_group_silhouette(
             base_dir=args.base_dir,
@@ -934,6 +946,7 @@ if __name__ == "__main__":
             max_clusters=args.max_clusters,
             mpm_thres=args.mpm_thres
         )
+        
     if args.indi_sil:
         validation_indi_silhouette(
             base_dir=args.base_dir,

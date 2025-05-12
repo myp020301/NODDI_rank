@@ -101,7 +101,7 @@ def group_refer(base_dir, roi, subject_paths, max_clusters, method, group_thresh
     group_mask[group_mask >= thresh_val] = 1
 
 
-    group_roi_dir = os.path.join(base_dir, "Group_xuanwu", roi)
+    group_roi_dir = os.path.join(base_dir, "Group", roi)
     os.makedirs(group_roi_dir, exist_ok=True)
     mask_file = os.path.join(group_roi_dir, f"{roi}_roimask_thr{int(real_thresh*100)}.nii.gz")
     mask_nii = nib.Nifti1Image(group_mask, affine=nii_template.affine, header=nii_template.header)
@@ -183,8 +183,8 @@ def symmetry_group(base_dir, region_l, region_r, max_clusters, group_thresh):
       利用 Munkres 算法得到最佳匹配，将右侧结果的标签重新映射，
       最后保存修正后的右侧结果（先将原文件重命名为 .old）。
     """
-    group_dir_l = os.path.join(base_dir, "Group_xuanwu", region_l)
-    group_dir_r = os.path.join(base_dir, "Group_xuanwu", region_r)
+    group_dir_l = os.path.join(base_dir, "Group", region_l)
+    group_dir_r = os.path.join(base_dir, "Group", region_r)
     # 若右侧目录不存在，则不处理
     if not os.path.isdir(group_dir_r):
         print(f"[WARNING] Right-side group directory not found: {group_dir_r}")
