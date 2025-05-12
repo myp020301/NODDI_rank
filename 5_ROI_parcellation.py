@@ -57,7 +57,7 @@ def sc3(k, W):
     return labels
 
 
-def process_roi(roi_name, roi_coord_folder, img_folder, con_folder, outdir, method, max_cl_num):
+def process_roi(roi_name, roi_coord_folder, img_folder, con_folder, outdir, method, max_clusters):
     """
     对单个 ROI（由 roi_name 索引指定）进行处理：
       1) 从 roi_coord_folder 中读取 ROI 坐标文件（每行 "x y z"），
@@ -109,7 +109,7 @@ def process_roi(roi_name, roi_coord_folder, img_folder, con_folder, outdir, meth
     affine = ref_nii.affine
 
     # 4) 循环不同聚类数
-    for k in range(2, max_cl_num + 1):
+    for k in range(2, max_clusters + 1):
         out_nii = os.path.join(outdir, f"seed_{roi_name}_{k}.nii.gz")
         if os.path.isfile(out_nii):
             print(f"[INFO] {out_nii} 已存在，跳过。")
@@ -144,8 +144,9 @@ def main():
     parser.add_argument("--data_path", required=True)
     parser.add_argument("--roi_dir",default="/data2/mayupeng/BNU/ROI")
     parser.add_argument("--roi_name", required=True)
+    parser.add_argument("--max_clusters", type=int, default=6)
     parser.add_argument("--method", default="sc", choices=["sc","kmeans","simlr"])
-    parser.add_argument("--max_cl_num", type=int, default=6)
+    
     args = parser.parse_args()
 
     dp = args.data_path
@@ -156,7 +157,7 @@ def main():
     outdir           = os.path.join(dp, "data", "probtrack_old", f"parcellation_{args.method}")
     os.makedirs(outdir, exist_ok=True)
 
-    process_roi(rn, roi_coord_folder, img_folder, con_folder, outdir, args.method, args.max_cl_num)
+    process_roi(rn, roi_coord_folder, img_folder, con_folder, outdir, args.method, args.max_clusters)
     print("[INFO] ROI 分割完成。")
 
 if __name__ == "__main__":

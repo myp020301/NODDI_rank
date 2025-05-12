@@ -21,7 +21,7 @@ def main():
     parser.add_argument("--data_path",    required=True)
     parser.add_argument("--roi_dir", default="/data2/mayupeng/BNU/ROI")
     parser.add_argument("--roi_name", required=True)
-    parser.add_argument("--max_cl_num",   type=int,    default=6)
+    parser.add_argument("--max_clusters",   type=int,    default=6)
     parser.add_argument("--method",       default="sc", choices=["sc","kmeans","simlr"])
     parser.add_argument("--use_t1",       action="store_true")
     parser.add_argument("--mni_template", default=os.path.join(os.environ.get("FSLDIR","/usr/local/fsl"),"data/standard/MNI152_T1_1mm_brain.nii.gz"))
@@ -58,7 +58,7 @@ def main():
         ref_img  = args.fa_template
 
     # 批量把每个 k 的 ROI 从个体空间推到标准空间
-    for k in range(2, args.max_cl_num + 1):
+    for k in range(2, args.max_clusters + 1):
         in_roi  = os.path.join(inp_dir, f"seed_{args.roi_name}_{k}.nii.gz")
         if not os.path.isfile(in_roi):
             print(f"[WARN] 未找到 {in_roi}，跳过 k={k}")

@@ -107,171 +107,208 @@ def run_bedpostx(subject_paths, bedpostx_script, njobs):
                 print(f"[ERROR] bedpostx 失败 ({p}): {e}")
 
 
-# Steps 2-6: per-ROI per-subject processing
-def run_roi_step(data_directory, script_path, roi_dir=None, roi_name=None, use_t1=False):
-    cmd = f"python {script_path} --data_path {data_directory} --roi_dir {roi_dir} --roi_name {roi_name}"
-    script_filename = os.path.basename(script_path)
-    if use_t1 and script_filename.startswith(('2_','6_')):
+def run_roi_step(data_directory,
+                 script_path,
+                 roi_dir=None,
+                 roi_name=None,
+                 use_t1=False,
+                 max_clusters=None):
+    """封装单个被试脚本的 CLI 调用"""
+    cmd = f"python {script_path} --data_path {data_directory}"
+
+    # 2-6 步都会用到 ROI 信息
+    if roi_dir is not None:
+        cmd += f" --roi_dir {roi_dir}"
+    if roi_name is not None:
+        cmd += f" --roi_name {roi_name}"
+
+    # 步骤 4、5 需要 max_clusters
+    step_tag = os.path.basename(script_path).split("_", 1)[0]   # '4','5',...
+    if step_tag in {"4", "5"} and max_clusters is not None:
+        cmd += f" --max_clusters {max_clusters}"
+
+    # registration / ROI-to-MNI 可选用 T1
+    if use_t1 and step_tag in {"2", "6"}:
         cmd += " --use_t1"
+
     run_command(cmd)
 
+
 def run_group_analysis(subject_paths,
-                       group_refer_script,
-                       cluster_relabel_script,
-                       calc_mpm_script,
-                       postprocess_mpm_script,
-                       validation_script,
+                       group_refer_script,      # 7
+                       cluster_relabel_script,  # 8
+                       calc_mpm_script,         # 9
+                       postprocess_mpm_script,  # 10
+                       validation_script,       # 11
+                       indices_plot_script,     # 12
                        base_directory,
                        roi_name,
-                       njobs):
-    subjects = ",".join(subject_paths)
-    '''
-    # Step 7: Group refer（串行）
-    print(f"[INFO] Step 7: Group refer for ROI {roi_name}")
-    run_command(
-        f"python {group_refer_script} "
-        f"--base_dir {base_directory} "
-        f"--subject_data {subjects} "
-        f"--roi_name {roi_name}"
-    )
-    '''
-    # Steps 8–11: 串行执行 relabel, calc_mpm, postprocess, validation
-    print(f"[INFO] Steps 8–11: Serial for ROI {roi_name}")
-    for script in [
-       # cluster_relabel_script,
-       # calc_mpm_script,
-       # postprocess_mpm_script,
-        validation_script  
-    ]:
+                       njobs,
+                       max_clusters):
+    """串行执行 7-12 步，每一步都追加 --max_clusters"""
+
+    subjects_arg = ",".join(subject_paths)
+    scripts = [
+        #group_refer_script,
+        #cluster_relabel_script,
+        #calc_mpm_script,
+        #postprocess_mpm_script,
+        validation_script,
+        indices_plot_script
+    ]
+
+    for script in scripts:
         cmd = (
             f"python {script} "
             f"--base_dir {base_directory} "
             f"--roi_name {roi_name} "
-            f"--subject_data {subjects} "
-            f"--njobs {njobs}"
+            f"--subject_data {subjects_arg} "
+            f"--njobs {njobs} "
+            f"--max_clusters {max_clusters}"
         )
-        print(f"[INFO] Running {os.path.basename(script)} for ROI {roi_name}")
+        print(f"[INFO] Run {os.path.basename(script)} for ROI {roi_name}")
         run_command(cmd)
 
-    print(f"[INFO] Steps 8–11 completed for ROI {roi_name}")
+    print(f"[INFO] Steps 7-12 finished for ROI {roi_name}")
 
-
-def process_single_roi(base_directory, use_t1, roi_name, roi_dir, subject_paths,
-                       registration_script, roi_probtrack_script, roi_calc_matrix_script,
-                       roi_parcellation_script, roi_toMNI_script,
-                       group_refer_script, cluster_relabel_script, calc_mpm_script,
-                       postprocess_mpm_script, validation_script, njobs):
-    print(f"[INFO] ==== 开始处理 ROI {roi_name} ====")
-    
-    with ProcessPoolExecutor(max_workers=njobs) as ex:
-        # 步骤 2: Registration
-        '''
-        print(f"[INFO] Step 2: Registration for ROI {roi_name}")
-        futures = [ex.submit(
-            run_roi_step, p, registration_script, roi_dir, roi_name, use_t1) for p in subject_paths]
-        for f in as_completed(futures):
-            try: f.result()
-            except Exception as e: print(f"[ERROR] Registration ROI {roi_name}: {e}")
-            
-        # 步骤 3: Probtrack
-        print(f"[INFO] Step 3: Probtrack for ROI {roi_name}")
-        futures = [ex.submit(run_roi_step, p, roi_probtrack_script, roi_dir, roi_name) for p in subject_paths]
-        for f in as_completed(futures):
-            try: f.result()
-            except Exception as e: print(f"[ERROR] Probtrack ROI {roi_name}: {e}")
-        
-        # 步骤 4: CalcMatrix
-        print(f"[INFO] Step 4: CalcMatrix for ROI {roi_name}")
-        futures = [ex.submit(run_roi_step, p,  roi_calc_matrix_script, roi_dir, roi_name) for p in subject_paths]
-        for f in as_completed(futures):
-            try: f.result()
-            except Exception as e: print(f"[ERROR] CalcMatrix ROI {roi_name}: {e}")
-        
-        # 步骤 5: Parcellation
-        print(f"[INFO] Step 5: Parcellation for ROI {roi_name}")
-        futures = [ex.submit(run_roi_step, p,  roi_parcellation_script, roi_dir, roi_name) for p in subject_paths]
-        for f in as_completed(futures):
-            try: f.result()
-            except Exception as e: print(f"[ERROR] Parcellation ROI {roi_name}: {e}")
-        
-        # 步骤 6: ROI-to-MNI（保留原逻辑）
-        print(f"[INFO] Step 6: ROI-to-MNI for ROI {roi_name}")
-        futures = [ex.submit(run_roi_step, p, roi_toMNI_script, roi_dir, roi_name, use_t1) for p in subject_paths]
-        for f in as_completed(futures):
-            try: f.result()
-            except Exception as e: print(f"[ERROR] ROI-to-MNI ROI {e}")
-     '''       
-    # Steps 7,8 & 9: Group analysis, relabel, and MPM
-    print(f"[INFO] Step 7-10: Group analysis, relabel & MPM for ROI {roi_name}")
-    run_group_analysis(subject_paths,
+def process_single_roi(base_directory,
+                       use_t1,
+                       roi_name,
+                       roi_dir,
+                       subject_paths,
+                       registration_script,
+                       roi_probtrack_script,
+                       roi_calc_matrix_script,
+                       roi_parcellation_script,
+                       roi_toMNI_script,
                        group_refer_script,
                        cluster_relabel_script,
                        calc_mpm_script,
                        postprocess_mpm_script,
                        validation_script,
-                       base_directory,
-                       roi_name,
-                       njobs)
-    print(f"[INFO] ==== 完成处理 ROI {roi_name} ====")
+                       indices_plot_script,
+                       njobs,
+                       max_clusters):
+    print(f"\n[INFO] ==== 开始处理 ROI {roi_name} ====")
+    '''
+    # ── 2-6 步：并行 per-subject ───────────────────────────────
+    with ProcessPoolExecutor(max_workers=njobs) as ex:
+        # 2. registration
+        futures = [
+            ex.submit(run_roi_step, p, registration_script,
+                      roi_dir, roi_name, use_t1, max_clusters)
+            for p in subject_paths
+        ]
+        for f in as_completed(futures): f.result()
+
+        # 3. probtrack
+        futures = [
+            ex.submit(run_roi_step, p, roi_probtrack_script,
+                      roi_dir, roi_name, False, max_clusters)
+            for p in subject_paths
+        ]
+        for f in as_completed(futures): f.result()
+
+        # 4. calc-matrix
+        futures = [
+            ex.submit(run_roi_step, p, roi_calc_matrix_script,
+                      roi_dir, roi_name, False, max_clusters)
+            for p in subject_paths
+        ]
+        for f in as_completed(futures): f.result()
+
+        # 5. parcellation
+        futures = [
+            ex.submit(run_roi_step, p, roi_parcellation_script,
+                      roi_dir, roi_name, False, max_clusters)
+            for p in subject_paths
+        ]
+        for f in as_completed(futures): f.result()
+
+        # 6. ROI-to-MNI
+        futures = [
+            ex.submit(run_roi_step, p, roi_toMNI_script,
+                      roi_dir, roi_name, use_t1, max_clusters)
+            for p in subject_paths
+        ]
+        for f in as_completed(futures): f.result()
+'''
+    # ── 7-12 步：group-level 串行 ───────────────────────────────
+    run_group_analysis(
+        subject_paths,
+        group_refer_script,
+        cluster_relabel_script,
+        calc_mpm_script,
+        postprocess_mpm_script,
+        validation_script,
+        indices_plot_script,
+        base_directory,
+        roi_name,
+        njobs,
+        max_clusters
+    )
+
+    print(f"[INFO] ==== 完成 ROI {roi_name} ====")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="批量执行 DWI/ROI 处理及群组分析，包括 MPM 计算")
-    parser.add_argument("--base_dir", default="/data2/mayupeng/BNU", help="Base directory path")
-    parser.add_argument("--datasets", nargs='+', default=["Agility_sample"], help="数据集列表")
-    parser.add_argument("--roi_dir", default="/data2/mayupeng/BNU/ROI", help="标准空间 ROI 文件夹")
-    parser.add_argument("--roi_list_file", default="/data2/mayupeng/BNU/JHU50.txt", help="包含 ROI 名称的文件，每行一个名称")
-    parser.add_argument("--bedpostx_script", default="/data2/mayupeng/BNU/1_bedpostx.py")
-    parser.add_argument("--registration_script", default="/data2/mayupeng/BNU/2_registration.py")
-    parser.add_argument("--roi_probtrack_script", default="/data2/mayupeng/BNU/3_ROI_probtrack.py")
+    parser = argparse.ArgumentParser(
+        description="批量执行 DWI / ROI 全流程，包括 12 步指标绘图"
+    )
+    parser.add_argument("--base_dir", default="/data2/mayupeng/BNU")
+    parser.add_argument("--datasets", nargs="+", default=["Agility_sample"])
+    parser.add_argument("--roi_dir", default="/data2/mayupeng/BNU/ROI")
+    parser.add_argument("--roi_list_file", default="/data2/mayupeng/BNU/JHU50.txt")
+    parser.add_argument("--max_clusters", type=int, default=5)          
+    parser.add_argument("--use_t1", action="store_true")
+    parser.add_argument("--njobs", type=int, default=4)
+
+    # 脚本路径
+    parser.add_argument("--bedpostx_script",        default="/data2/mayupeng/BNU/1_bedpostx.py")
+    parser.add_argument("--registration_script",    default="/data2/mayupeng/BNU/2_registration.py")
+    parser.add_argument("--roi_probtrack_script",   default="/data2/mayupeng/BNU/3_ROI_probtrack.py")
     parser.add_argument("--roi_calc_matrix_script", default="/data2/mayupeng/BNU/4_ROI_calc_matrix.py")
-    parser.add_argument("--roi_parcellation_script", default="/data2/mayupeng/BNU/5_ROI_parcellation.py")
-    parser.add_argument("--roi_toMNI_script", default="/data2/mayupeng/BNU/6_ROI_toMNI.py")
-    parser.add_argument("--group_refer_script", default="/data2/mayupeng/BNU/7_group_refer.py")
+    parser.add_argument("--roi_parcellation_script",default="/data2/mayupeng/BNU/5_ROI_parcellation.py")
+    parser.add_argument("--roi_toMNI_script",       default="/data2/mayupeng/BNU/6_ROI_toMNI.py")
+    parser.add_argument("--group_refer_script",     default="/data2/mayupeng/BNU/7_group_refer.py")
     parser.add_argument("--cluster_relabel_script", default="/data2/mayupeng/BNU/8_cluster_relabel.py")
-    parser.add_argument("--calc_mpm_script", default="/data2/mayupeng/BNU/9_calc_mpm.py")
+    parser.add_argument("--calc_mpm_script",        default="/data2/mayupeng/BNU/9_calc_mpm.py")
     parser.add_argument("--postprocess_mpm_script", default="/data2/mayupeng/BNU/10_postprocess_mpm.py")
-    parser.add_argument("--validation_script", default="/data2/mayupeng/BNU/11_validation.py")
-    parser.add_argument("--use_t1", action="store_true", help="启用 T1 注册")
-    parser.add_argument("--njobs", type=int, default=4, help="并行作业数量 (default:5)")
+    parser.add_argument("--validation_script",      default="/data2/mayupeng/BNU/11_validation.py")
+    parser.add_argument("--indices_plot_script",    default="/data2/mayupeng/BNU/12_indices_plot.py")
     args = parser.parse_args()
 
-    # 准备数据路径文件
+    # ── 预处理：收集所有被试路径 ───────────────────────────────
     data_paths_file = os.path.join(args.base_dir, "group_data_paths.txt")
-    open(data_paths_file, 'w').close()
-    
+    open(data_paths_file, "w").close()
+
     all_subject_paths = []
-    for ds in args.datasets:
-        ds_dir = os.path.join(args.base_dir, ds)
+    for dataset in args.datasets:
+        ds_dir = os.path.join(args.base_dir, dataset)
         if not os.path.isdir(ds_dir):
-            print(f"[ERROR] 找不到目录: {ds_dir}")
+            print(f"[WARN] 跳过不存在的数据集 {ds_dir}")
             continue
         for subj in os.listdir(ds_dir):
-            data_path, ok = prepare_subject_data(ds_dir, subj, args.use_t1)
-            if not ok:
-                continue
-            # 记录 subject 数据路径
-            with open(data_paths_file, "a") as f_out:
-                f_out.write(f"{data_path}\n")
-            all_subject_paths.append(data_path)
-    print(f"[INFO] Running bedpostx for subject {subj}")
-    #run_bedpostx(all_subject_paths, args.bedpostx_script, args.njobs)
-    
+            path, ok = prepare_subject_data(ds_dir, subj, args.use_t1)
+            if ok:
+                all_subject_paths.append(path)
+                with open(data_paths_file, "a") as f_out:
+                    f_out.write(path + "\n")
+
+    # run_bedpostx(all_subject_paths, args.bedpostx_script, args.njobs)
+
     # 读取 ROI 列表
     with open(args.roi_list_file) as f:
         roi_names = [l.strip() for l in f if l.strip()]
 
-    with open(data_paths_file, "r") as f:
-        subject_data = [line.strip() for line in f if line.strip()]
-        
-    # 针对每个 ROI 执行流水线
+    # 主循环：逐 ROI
     for roi in roi_names[:1]:
         process_single_roi(
             args.base_dir,
             args.use_t1,
             roi,
             args.roi_dir,
-            subject_data,
+            all_subject_paths,
             args.registration_script,
             args.roi_probtrack_script,
             args.roi_calc_matrix_script,
@@ -282,5 +319,7 @@ if __name__ == "__main__":
             args.calc_mpm_script,
             args.postprocess_mpm_script,
             args.validation_script,
-            args.njobs
+            args.indices_plot_script,      
+            args.njobs,
+            args.max_clusters              
         )
