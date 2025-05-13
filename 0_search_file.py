@@ -145,14 +145,14 @@ def run_group_analysis(subject_paths,
                        roi_name,
                        njobs,
                        max_clusters):
-    """串行执行 7-12 步"""
+    """串行执行 7-12 步，每一步都追加 --max_clusters"""
 
     subjects_arg = ",".join(subject_paths)
     scripts = [
-        #group_refer_script,
-        #cluster_relabel_script,
-        #calc_mpm_script,
-        #postprocess_mpm_script,
+        group_refer_script,
+        cluster_relabel_script,
+        calc_mpm_script,
+        postprocess_mpm_script,
         validation_script,
         indices_plot_script
     ]
@@ -190,10 +190,8 @@ def process_single_roi(base_directory,
                        njobs,
                        max_clusters):
     print(f"\n[INFO] ==== 开始处理 ROI {roi_name} ====")
-    '''
     # ── 2-6 步：并行 per-subject ───────────────────────────────
     with ProcessPoolExecutor(max_workers=njobs) as ex:
-        
         # 2. registration
         futures = [
             ex.submit(run_roi_step, p, registration_script,
@@ -233,7 +231,6 @@ def process_single_roi(base_directory,
             for p in subject_paths
         ]
         for f in as_completed(futures): f.result()
-'''
     # ── 7-12 步：group-level 串行 ───────────────────────────────
     run_group_analysis(
         subject_paths,
@@ -296,14 +293,14 @@ if __name__ == "__main__":
                 with open(data_paths_file, "a") as f_out:
                     f_out.write(path + "\n")
 
-    #run_bedpostx(all_subject_paths, args.bedpostx_script, args.njobs)
+    run_bedpostx(all_subject_paths, args.bedpostx_script, args.njobs)
 
     # 读取 ROI 列表
     with open(args.roi_list_file) as f:
         roi_names = [l.strip() for l in f if l.strip()]
 
     # 主循环：逐 ROI
-    for roi in roi_names[7:8]:
+    for roi in roi_names[:1]:
         process_single_roi(
             args.base_dir,
             args.use_t1,
