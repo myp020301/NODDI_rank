@@ -122,9 +122,9 @@ def run_roi_step(data_directory,
     if roi_name is not None:
         cmd += f" --roi_name {roi_name}"
 
-    # 步骤 4、5 需要 max_clusters
+    # 步骤 5、6 需要 max_clusters
     step_tag = os.path.basename(script_path).split("_", 1)[0]   # '4','5',...
-    if step_tag in {"4", "5"} and max_clusters is not None:
+    if step_tag in {"5", "6"} and max_clusters is not None:
         cmd += f" --max_clusters {max_clusters}"
 
     # registration / ROI-to-MNI 可选用 T1
@@ -145,7 +145,7 @@ def run_group_analysis(subject_paths,
                        roi_name,
                        njobs,
                        max_clusters):
-    """串行执行 7-12 步，每一步都追加 --max_clusters"""
+    """串行执行 7-12 步"""
 
     subjects_arg = ",".join(subject_paths)
     scripts = [
@@ -193,6 +193,7 @@ def process_single_roi(base_directory,
     '''
     # ── 2-6 步：并行 per-subject ───────────────────────────────
     with ProcessPoolExecutor(max_workers=njobs) as ex:
+        
         # 2. registration
         futures = [
             ex.submit(run_roi_step, p, registration_script,
@@ -295,14 +296,14 @@ if __name__ == "__main__":
                 with open(data_paths_file, "a") as f_out:
                     f_out.write(path + "\n")
 
-    # run_bedpostx(all_subject_paths, args.bedpostx_script, args.njobs)
+    #run_bedpostx(all_subject_paths, args.bedpostx_script, args.njobs)
 
     # 读取 ROI 列表
     with open(args.roi_list_file) as f:
         roi_names = [l.strip() for l in f if l.strip()]
 
     # 主循环：逐 ROI
-    for roi in roi_names[:1]:
+    for roi in roi_names[7:8]:
         process_single_roi(
             args.base_dir,
             args.use_t1,

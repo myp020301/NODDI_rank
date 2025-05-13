@@ -246,6 +246,7 @@ if __name__ == "__main__":
     parser.add_argument("--base_dir", required=True)
     parser.add_argument("--roi_name", required=True)
     parser.add_argument("--subject_data", required=True)
+    parser.add_argument("--njobs",          type=int,   default=3)
     parser.add_argument("--max_clusters", type=int, default=6)
     parser.add_argument("--method", default="sc", choices=["sc", "kmeans", "simlr"])
     parser.add_argument("--group_threshold", type=float, default=0.25)

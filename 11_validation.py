@@ -420,7 +420,6 @@ def _adjacency(img: np.ndarray, kc: int, struct: np.ndarray):
         mat = np.divide(mat, row_sum, where=row_sum != 0)
     return mat
 
-
 # ──────────────────────── group‑level TPD ─────────────────────
 def validation_group_tpd(base_dir: str, roi: str, subjects: List[str],
                          max_clusters: int, mpm_thres: float):
@@ -525,13 +524,14 @@ def validation_indi_tpd(base_dir: str, roi: str, subjects: List[str], method: st
     # 加载左右半球 group mask
     thr = group_threshold if group_threshold != 0 else np.finfo(float).eps
     thr_i = int(thr * 100)
-    mask_dir = os.path.join(base_dir, "Group", roi_base)
+    mask_dir_l = os.path.join(base_dir, "Group", roi)
+    mask_dir_r = os.path.join(base_dir, "Group", f"{roi_base}_R")
     mask_l = np.nan_to_num(
-        nib.load(os.path.join(mask_dir, f"{roi_base}_L_roimask_thr{thr_i}.nii.gz")
+        nib.load(os.path.join(mask_dir_l, f"{roi_base}_L_roimask_thr{thr_i}.nii.gz")
                  ).get_fdata(), nan=0
     ).astype(bool)
     mask_r = np.nan_to_num(
-        nib.load(os.path.join(mask_dir, f"{roi_base}_R_roimask_thr{thr_i}.nii.gz")
+        nib.load(os.path.join(mask_dir_r, f"{roi_base}_R_roimask_thr{thr_i}.nii.gz")
                  ).get_fdata(), nan=0
     ).astype(bool)
 
