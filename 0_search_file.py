@@ -116,18 +116,17 @@ def run_roi_step(data_directory,
     """封装单个被试脚本的 CLI 调用"""
     cmd = f"python {script_path} --data_path {data_directory}"
 
-    # 2-6 步都会用到 ROI 信息
-    if roi_dir is not None:
+    # 2‑6 步统一需要 ROI 信息
+    if roi_dir:
         cmd += f" --roi_dir {roi_dir}"
-    if roi_name is not None:
+    if roi_name:
         cmd += f" --roi_name {roi_name}"
 
-    # 步骤 5、6 需要 max_clusters
-    step_tag = os.path.basename(script_path).split("_", 1)[0]   # '4','5',...
+    step_tag = os.path.basename(script_path).split("_", 1)[0]   # '2','3','4',...
     if step_tag in {"5", "6"} and max_clusters is not None:
         cmd += f" --max_clusters {max_clusters}"
 
-    # registration / ROI-to-MNI 可选用 T1
+    # registration / ROI‑to‑MNI 可加 --use_t1
     if use_t1 and step_tag in {"2", "6"}:
         cmd += " --use_t1"
 
@@ -135,26 +134,25 @@ def run_roi_step(data_directory,
 
 
 def run_group_analysis(subject_paths,
-                       group_refer_script,      # 7
-                       cluster_relabel_script,  # 8
-                       calc_mpm_script,         # 9
-                       postprocess_mpm_script,  # 10
-                       validation_script,       # 11
-                       indices_plot_script,     # 12
+                       group_refer_script,
+                       cluster_relabel_script,
+                       calc_mpm_script,
+                       postprocess_mpm_script,
+                       validation_script,
+                       indices_plot_script,
                        base_directory,
                        roi_name,
                        njobs,
                        max_clusters):
-    """串行执行 7-12 步，每一步都追加 --max_clusters"""
 
     subjects_arg = ",".join(subject_paths)
     scripts = [
-        group_refer_script,
-        cluster_relabel_script,
-        calc_mpm_script,
-        postprocess_mpm_script,
-        validation_script,
-        indices_plot_script
+        group_refer_script,      # 7
+        cluster_relabel_script,  # 8
+        calc_mpm_script,         # 9
+        postprocess_mpm_script,  # 10
+        validation_script,       # 11
+        indices_plot_script      # 12
     ]
 
     for script in scripts:
@@ -162,14 +160,14 @@ def run_group_analysis(subject_paths,
             f"python {script} "
             f"--base_dir {base_directory} "
             f"--roi_name {roi_name} "
-            f"--subject_data {subjects_arg} "
+            f"--subject_data {subjects_arg} "   
             f"--njobs {njobs} "
-            f"--max_clusters {max_clusters}"
+            f"--max_clusters {max_clusters}"    
         )
         print(f"[INFO] Run {os.path.basename(script)} for ROI {roi_name}")
         run_command(cmd)
 
-    print(f"[INFO] Steps 7-12 finished for ROI {roi_name}")
+    print(f"[INFO] Steps 7‑12 finished for ROI {roi_name}")
 
 def process_single_roi(base_directory,
                        use_t1,
@@ -189,49 +187,42 @@ def process_single_roi(base_directory,
                        indices_plot_script,
                        njobs,
                        max_clusters):
+
     print(f"\n[INFO] ==== 开始处理 ROI {roi_name} ====")
-    # ── 2-6 步：并行 per-subject ───────────────────────────────
-    with ProcessPoolExecutor(max_workers=njobs) as ex:
-        # 2. registration
-        futures = [
-            ex.submit(run_roi_step, p, registration_script,
-                      roi_dir, roi_name, use_t1, max_clusters)
-            for p in subject_paths
-        ]
-        for f in as_completed(futures): f.result()
 
-        # 3. probtrack
-        futures = [
-            ex.submit(run_roi_step, p, roi_probtrack_script,
-                      roi_dir, roi_name, False, max_clusters)
-            for p in subject_paths
-        ]
-        for f in as_completed(futures): f.result()
+    # ───────────── 2‑6 步：按脚本顺序，脚本内对被试并行 ─────────────
+    per_subj_scripts = [
+        registration_script,     # 2
+        roi_probtrack_script,    # 3
+        roi_calc_matrix_script,  # 4
+        roi_parcellation_script, # 5
+        roi_toMNI_script         # 6
+    ]
 
-        # 4. calc-matrix
-        futures = [
-            ex.submit(run_roi_step, p, roi_calc_matrix_script,
-                      roi_dir, roi_name, False, max_clusters)
-            for p in subject_paths
-        ]
-        for f in as_completed(futures): f.result()
+    for script in per_subj_scripts:
+        step_tag = os.path.basename(script).split("_", 1)[0]
+        print(f"[INFO] Step {step_tag}: {os.path.basename(script)}  (ROI {roi_name})")
 
-        # 5. parcellation
-        futures = [
-            ex.submit(run_roi_step, p, roi_parcellation_script,
-                      roi_dir, roi_name, False, max_clusters)
-            for p in subject_paths
-        ]
-        for f in as_completed(futures): f.result()
+        with ProcessPoolExecutor(max_workers=njobs) as ex:
+            futures = [
+                ex.submit(
+                    run_roi_step,
+                    subj_path,
+                    script,
+                    roi_dir,
+                    roi_name,
+                    use_t1,          
+                    max_clusters
+                )
+                for subj_path in subject_paths
+            ]
+            for f in as_completed(futures):
+                try:
+                    f.result()
+                except Exception as e:
+                    print(f"[ERROR] {os.path.basename(script)} ROI {roi_name}: {e}")
 
-        # 6. ROI-to-MNI
-        futures = [
-            ex.submit(run_roi_step, p, roi_toMNI_script,
-                      roi_dir, roi_name, use_t1, max_clusters)
-            for p in subject_paths
-        ]
-        for f in as_completed(futures): f.result()
-    # ── 7-12 步：group-level 串行 ───────────────────────────────
+    # ───────────── 7‑12 步：群组流程 ─────────────
     run_group_analysis(
         subject_paths,
         group_refer_script,
@@ -247,6 +238,7 @@ def process_single_roi(base_directory,
     )
 
     print(f"[INFO] ==== 完成 ROI {roi_name} ====")
+
 
 
 if __name__ == "__main__":
@@ -300,7 +292,7 @@ if __name__ == "__main__":
         roi_names = [l.strip() for l in f if l.strip()]
 
     # 主循环：逐 ROI
-    for roi in roi_names[:1]:
+    for roi in roi_names[7:8]:
         process_single_roi(
             args.base_dir,
             args.use_t1,
