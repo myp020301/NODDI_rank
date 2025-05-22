@@ -89,14 +89,14 @@ def process_roi(roi_name, roi_coord_folder, img_folder, con_folder, outdir, meth
     print(f"[INFO] 已加载相关矩阵：shape={con_mat.shape}")
     
     # ---- 删除全零行：剔除那些在所有体素间无任何连接的行/列 ----
-    valid_mask = np.any(con_mat != 0, axis=1)
-    num_removed = np.count_nonzero(~valid_mask)
-    if num_removed > 0:
-        print(f"[INFO] 删除全零行：共剔除 {num_removed} / {len(valid_mask)} 个体素")
-        con_mat = con_mat[valid_mask][:, valid_mask]
-        coords  = coords[valid_mask]
-        print(f"[INFO] 剔除后相关矩阵 shape={con_mat.shape}, 坐标数={coords.shape[0]}")
+    row_mask = np.any(con_mat != 0, axis=1)      # 只看行
+    num_removed = np.count_nonzero(~row_mask)
+    if num_removed:
+        print(f"[INFO] 删除全零行：剔除 {num_removed}/{len(row_mask)} 行")
+        con_mat = con_mat[row_mask]              # ← 只保留行
+        coords  = coords[row_mask]               # 同步裁掉坐标
     # ---- 删除全零行结束 ----
+    n_voxels = coords.shape[0] 
     
     # 3) 获得空间信息：用第一个 ROI 坐标对应的 fdt_paths 文件
     x0, y0, z0 = coords[0]

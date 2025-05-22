@@ -616,12 +616,13 @@ def validation_group_silhouette(
             fp.write(f"cluster_num: {kc}\naverage_group_silhouette: {group_sil[kc]}\n\n")
 
 # ────────── individual-silhouette 并行任务 ──────────
+
 def _calc_indi_sil(idx: int, subjects: List[str], base_dir: str, roi: str,
                    method: str, max_clusters: int) -> Tuple[int, np.ndarray]:
     sub     = subjects[idx]
     sub_dir = os.path.join(base_dir, sub)
 
-    # ① 加载坐标 & 连接矩阵 --------------------------------------------------
+    # ① 加载 ROI 坐标 & 连接矩阵 ---------------------------------------------
     coord_file = os.path.join(sub_dir, "data", "seeds_txt_all",
                               f"seed_region_{roi}.txt")
     con_file   = os.path.join(sub_dir, "data", "probtrack_old", "con_cor",
@@ -629,43 +630,51 @@ def _calc_indi_sil(idx: int, subjects: List[str], base_dir: str, roi: str,
     if not (os.path.exists(coord_file) and os.path.exists(con_file)):
         raise FileNotFoundError(f"{coord_file} 或 {con_file} 缺失")
 
-    xyz   = np.loadtxt(coord_file, dtype=int)          # (N,3)
-    conn  = np.load(con_file).astype(np.float64)       # (N,N)
-    conn /= conn.sum(1, keepdims=True) + 1e-12         # 归一化防 0
-    dist_mat = squareform(pdist(conn, metric="cosine"))  # (N,N)
+    xyz  = np.loadtxt(coord_file, dtype=int)            # (N, 3)
+    conn = np.load(con_file).astype(np.float64)         # (N, N)
 
-    # ② 逐 kc 计算 silhouette -------------------------------------------------
+    # ---- 删除全零行／列 -----------------------------------------------------
+    row_mask = np.any(conn != 0, axis=1)                # True → 保留
+    num_removed = np.count_nonzero(~row_mask)
+    if num_removed:
+        print(f"[INFO] subj={sub} 删除全零行/列: {num_removed}/{len(row_mask)}")
+        conn = conn[row_mask]             # 行列同步裁剪
+        xyz  = xyz[row_mask]                            # 坐标同步更新
+    # -----------------------------------------------------------------------
+
+    # ② 归一化后计算余弦距离 --------------------------------------------------
+    conn /= conn.sum(1, keepdims=True) + 1e-12          # 防零除
+    dist_mat = squareform(pdist(conn, metric="cosine")) # (N', N')
+
+    # ③ 逐 kc 计算 silhouette -------------------------------------------------
     sil_row = np.full(max_clusters + 1, np.nan)
 
     for kc in range(2, max_clusters + 1):
         seg_path = os.path.join(
             sub_dir, "data", "probtrack_old",
-            f"parcellation_{method}",
-            f"seed_{roi}_{kc}.nii.gz"
+            f"parcellation_{method}", f"seed_{roi}_{kc}.nii.gz"
         )
         if not os.path.exists(seg_path):
             warnings.warn(f"{seg_path} 缺失，跳 subj={sub} kc={kc}")
             continue
+
         lab_img = np.nan_to_num(nib.load(seg_path).get_fdata(), nan=0).astype(int)
-        u, c = np.unique(lab_img, return_counts=True)
-        label_counts_full = dict(zip(u.tolist(), c.tolist()))      
-        print(f"[SIL-indi] seg_path={seg_path} seg_label_counts={label_counts_full}")    
-              
-
         labels  = lab_img[xyz[:, 0], xyz[:, 1], xyz[:, 2]]
-        
-        unique_labels, counts = np.unique(labels, return_counts=True)
-        label_counts = dict(zip(unique_labels.tolist(), counts.tolist()))
-        print(f"[SIL-indi] subj={sub} kc={kc}  label_counts={label_counts}")
 
-        # —— 关键改动：簇数不足时直接给 NaN，不抛错也不强行置 0
+        # 若簇数不足，跳过该 kc
         if np.unique(labels).size < 2:
             continue
 
-        sil_vals     = silhouette_samples(dist_mat, labels, metric="precomputed")
-        sil_row[kc]  = np.nanmean(sil_vals)
+        sil_vals    = silhouette_samples(dist_mat, labels, metric="precomputed")
+        sil_row[kc] = np.nanmean(sil_vals)
+
+        # 可选：打印每次计算的信息，便于调试
+        u, c = np.unique(labels, return_counts=True)
+        print(f"[SIL-indi] subj={sub} kc={kc} label_counts={dict(zip(u,c))} "
+              f"sil={sil_row[kc]:.4f}")
 
     return idx, sil_row
+
 
 
 # ────────── individual‑silhouette 主调度 ──────────

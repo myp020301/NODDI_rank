@@ -147,10 +147,10 @@ def run_group_analysis(subject_paths,
 
     subjects_arg = ",".join(subject_paths)
     scripts = [
-        group_refer_script,      # 7
-        cluster_relabel_script,  # 8
-        calc_mpm_script,         # 9
-        postprocess_mpm_script,  # 10
+        #group_refer_script,      # 7
+        #cluster_relabel_script,  # 8
+        #calc_mpm_script,         # 9
+        #postprocess_mpm_script,  # 10
         validation_script,       # 11
         indices_plot_script      # 12
     ]
@@ -191,6 +191,7 @@ def process_single_roi(base_directory,
     print(f"\n[INFO] ==== 开始处理 ROI {roi_name} ====")
 
     # ───────────── 2‑6 步：按脚本顺序，脚本内对被试并行 ─────────────
+    
     per_subj_scripts = [
         registration_script,     # 2
         roi_probtrack_script,    # 3
@@ -221,7 +222,7 @@ def process_single_roi(base_directory,
                     f.result()
                 except Exception as e:
                     print(f"[ERROR] {os.path.basename(script)} ROI {roi_name}: {e}")
-
+    
     # ───────────── 7‑12 步：群组流程 ─────────────
     run_group_analysis(
         subject_paths,
@@ -236,7 +237,7 @@ def process_single_roi(base_directory,
         njobs,
         max_clusters
     )
-
+    
     print(f"[INFO] ==== 完成 ROI {roi_name} ====")
 
 
@@ -267,11 +268,12 @@ if __name__ == "__main__":
     parser.add_argument("--validation_script",      default="/data2/mayupeng/BNU/11_validation.py")
     parser.add_argument("--indices_plot_script",    default="/data2/mayupeng/BNU/12_indices_plot.py")
     args = parser.parse_args()
-
+    
     # ── 预处理：收集所有被试路径 ───────────────────────────────
     data_paths_file = os.path.join(args.base_dir, "group_data_paths.txt")
+    
     open(data_paths_file, "w").close()
-
+    
     all_subject_paths = []
     for dataset in args.datasets:
         ds_dir = os.path.join(args.base_dir, dataset)
@@ -284,7 +286,9 @@ if __name__ == "__main__":
                 all_subject_paths.append(path)
                 with open(data_paths_file, "a") as f_out:
                     f_out.write(path + "\n")
-
+                    
+    with open(data_paths_file) as f:
+        all_subject_paths = [line.strip() for line in f if line.strip()]
     run_bedpostx(all_subject_paths, args.bedpostx_script, args.njobs)
 
     # 读取 ROI 列表
@@ -292,7 +296,7 @@ if __name__ == "__main__":
         roi_names = [l.strip() for l in f if l.strip()]
 
     # 主循环：逐 ROI
-    for roi in roi_names[7:8]:
+    for roi in roi_names[0:1]:
         process_single_roi(
             args.base_dir,
             args.use_t1,
