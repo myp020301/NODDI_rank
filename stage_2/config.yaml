@@ -1,0 +1,14 @@
+dataset_dir : "/home/myp/Documents/Project/stage2/dataset"        # 原始 DWI/bvec/bval/mask 等
+workdir     : "./GIAGA_work"     # 中间结果 & 最终 atlas
+atlas_std   : "${FSLDIR}/data/atlases/JHU/JHU-ICBM-labels-1mm.nii.gz"
+fa_std      : "${FSLDIR}/data/atlases/JHU/JHU-ICBM-FA-1mm.nii.gz"
+
+atlas_order    : 19
+group_iter_max : 10
+overlap_thr    : 0.95
+iter_max_sub: 50
+
+nsamples   : 5000
+nsteps     : 2000
+steplength : 0.5
+cthr       : 0.2
