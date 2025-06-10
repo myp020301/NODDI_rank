@@ -25,7 +25,7 @@ def main():
     parser.add_argument("--method",       default="sc", choices=["sc","kmeans","simlr"])
     parser.add_argument("--use_t1",       action="store_true")
     parser.add_argument("--mni_template", default=os.path.join(os.environ.get("FSLDIR","/usr/local/fsl"),"data/standard/MNI152_T1_1mm_brain.nii.gz"))
-    parser.add_argument("--fa_template", default=os.path.join(os.environ.get("FSLDIR","/usr/local/fsl"),"data/standard/FMRIB58_FA_1mm.nii.gz"))
+    parser.add_argument("--fa_template", default=os.path.join(os.environ.get("FSLDIR","/usr/local/fsl"),"data/atlases/JHU/JHU-ICBM-FA-1mm.nii.gz"))
     args = parser.parse_args()
 
     os.chdir(args.data_path)
