@@ -4,11 +4,9 @@ import numpy as np
 import nibabel as nib
 import argparse
 from scipy import sparse
+from nibabel import processing as nbproc  
 
-import os
-import numpy as np
-import nibabel as nib
-from scipy import sparse
+VOX_SIZE = (5, 5, 5)     
 
 def calc_matrix_for_seed(
     roi_coord_file: str,
@@ -36,9 +34,11 @@ def calc_matrix_for_seed(
     ref_file = os.path.join(img_folder, f"{roi_name}_{x0}_{y0}_{z0}.nii.gz")
     if not os.path.isfile(ref_file):
         raise FileNotFoundError(f"[ERROR] 找不到参考文件: {ref_file}")
-    img_shape = nib.load(ref_file).shape
+    ref_img = nib.load(ref_file)
+    ref_img5 = nbproc.resample_to_output(ref_img, VOX_SIZE, order=1)  ### <- NEW
+    img_shape = ref_img5.shape                                        ### <- NEW
     n_total = np.prod(img_shape)
-    print(f"[INFO] 每个 3D 文件尺寸：{img_shape}, 展平后长度：{n_total}")
+    print(f"[INFO] 下采样后体积尺寸：{img_shape}  → 展平长度 {n_total}")
 
     # 构造稀疏连接矩阵
     rows, cols, vals = [], [], []
@@ -48,7 +48,10 @@ def calc_matrix_for_seed(
         if not os.path.isfile(fpath):
             print(f"[WARNING] 文件不存在: {fpath}，对应行置零")
             continue
-        data = nib.load(fpath).get_fdata().reshape(-1)
+        img = nib.load(fpath)
+        img5 = nbproc.resample_to_output(img, VOX_SIZE, order=1)      ### <- NEW
+        data = img5.get_fdata().reshape(-1)                           ### <- NEW
+        
         nz = np.nonzero(data)[0]
         rows.extend([i] * len(nz))
         cols.extend(nz.tolist())

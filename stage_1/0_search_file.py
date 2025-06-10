@@ -147,10 +147,10 @@ def run_group_analysis(subject_paths,
 
     subjects_arg = ",".join(subject_paths)
     scripts = [
-        #group_refer_script,      # 7
-        #cluster_relabel_script,  # 8
-        #calc_mpm_script,         # 9
-        #postprocess_mpm_script,  # 10
+        group_refer_script,      # 7
+        cluster_relabel_script,  # 8
+        calc_mpm_script,         # 9
+        postprocess_mpm_script,  # 10
         validation_script,       # 11
         indices_plot_script      # 12
     ]
@@ -193,9 +193,9 @@ def process_single_roi(base_directory,
     # ───────────── 2‑6 步：按脚本顺序，脚本内对被试并行 ─────────────
     
     per_subj_scripts = [
-        registration_script,     # 2
-        roi_probtrack_script,    # 3
-        roi_calc_matrix_script,  # 4
+        #registration_script,     # 2
+        #roi_probtrack_script,    # 3
+        #roi_calc_matrix_script,  # 4
         roi_parcellation_script, # 5
         roi_toMNI_script         # 6
     ]
@@ -250,7 +250,7 @@ if __name__ == "__main__":
     parser.add_argument("--datasets", nargs="+", default=["Agility_sample"])
     parser.add_argument("--roi_dir", default="/data2/mayupeng/BNU/ROI")
     parser.add_argument("--roi_list_file", default="/data2/mayupeng/BNU/JHU50.txt")
-    parser.add_argument("--max_clusters", type=int, default=5)          
+    parser.add_argument("--max_clusters", type=int, default=12)          
     parser.add_argument("--use_t1", action="store_true")
     parser.add_argument("--njobs", type=int, default=4)
 
@@ -296,7 +296,7 @@ if __name__ == "__main__":
         roi_names = [l.strip() for l in f if l.strip()]
 
     # 主循环：逐 ROI
-    for roi in roi_names[0:1]:
+    for roi in roi_names[6:8]:
         process_single_roi(
             args.base_dir,
             args.use_t1,

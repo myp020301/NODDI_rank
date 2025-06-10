@@ -28,8 +28,6 @@ def main():
     parser.add_argument("--fa_template", default=os.path.join(os.environ.get("FSLDIR","/usr/local/fsl"),"data/standard/FMRIB58_FA_1mm.nii.gz"))
     args = parser.parse_args()
 
-    args = parser.parse_args()
-
     os.chdir(args.data_path)
     region   = args.roi_name
     inp_dir  = os.path.join("data", "probtrack_old", f"parcellation_{args.method}")
